@@ -1,6 +1,14 @@
 import os
 import tempfile
 import unittest
+from sklearn.preprocessing import StandardScaler
+
+from ml.preprocessing.scaler import (
+    fit_scaler,
+    transform_features as transform_scaled_features,
+    save_scaler,
+    load_scaler,
+)
 
 import pandas as pd
 from sklearn.preprocessing import OneHotEncoder
@@ -157,6 +165,79 @@ class TestEncoder(unittest.TestCase):
 
         self.assertFalse(encoded_df.empty)
 
+class TestScaler(unittest.TestCase):
 
+    @classmethod
+    def setUpClass(cls):
+        cls.df = load_dataset()
+
+    def test_fit_scaler(self):
+        scaler = fit_scaler(self.df)
+
+        self.assertIsInstance(
+            scaler,
+            StandardScaler
+        )
+
+    def test_transform_features(self):
+        scaler = fit_scaler(self.df)
+
+        scaled_df = transform_scaled_features(
+            scaler,
+            self.df
+        )
+
+        self.assertIsInstance(
+            scaled_df,
+            pd.DataFrame
+        )
+
+        self.assertEqual(
+            len(scaled_df),
+            len(self.df)
+        )
+
+    def test_save_scaler(self):
+        scaler = fit_scaler(self.df)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+
+            path = os.path.join(
+                temp_dir,
+                "scaler.pkl"
+            )
+
+            save_scaler(
+                scaler,
+                path
+            )
+
+            self.assertTrue(
+                os.path.exists(path)
+            )
+
+    def test_load_scaler(self):
+        scaler = fit_scaler(self.df)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+
+            path = os.path.join(
+                temp_dir,
+                "scaler.pkl"
+            )
+
+            save_scaler(
+                scaler,
+                path
+            )
+
+            loaded = load_scaler(
+                path
+            )
+
+            self.assertIsInstance(
+                loaded,
+                StandardScaler
+            )
 if __name__ == "__main__":
     unittest.main()
