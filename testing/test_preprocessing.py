@@ -9,6 +9,12 @@ from ml.preprocessing.scaler import (
     save_scaler,
     load_scaler,
 )
+from ml.feature_selection.feature_selection import (
+    compute_feature_importance,
+    select_top_features,
+    save_selected_features,
+    load_selected_features,
+)
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from ml.preprocessing.preprocessing_pipeline import preprocess_dataset
@@ -310,5 +316,83 @@ class TestPreprocessingPipeline(unittest.TestCase):
             self.scaler,
             StandardScaler
         )
+class TestFeatureSelection(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        (
+            cls.X_train,
+            cls.X_test,
+            cls.y_train,
+            cls.y_test,
+            _,
+            _
+        ) = preprocess_dataset()
+
+    def test_feature_importance(self):
+        importance = compute_feature_importance(
+            self.X_train,
+            self.y_train
+        )
+
+        self.assertIsInstance(
+            importance,
+            pd.DataFrame
+        )
+
+        self.assertFalse(
+            importance.empty
+        )
+
+    def test_select_top_features(self):
+        importance = compute_feature_importance(
+            self.X_train,
+            self.y_train
+        )
+
+        features = select_top_features(
+            importance,
+            top_n=20
+        )
+
+        self.assertEqual(
+            len(features),
+            20
+        )
+
+    def test_save_and_load_selected_features(self):
+        importance = compute_feature_importance(
+            self.X_train,
+            self.y_train
+        )
+
+        features = select_top_features(
+            importance,
+            top_n=20
+        )
+
+        import tempfile
+        import os
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+
+            path = os.path.join(
+                temp_dir,
+                "selected_features.json"
+            )
+
+            save_selected_features(
+                features,
+                path
+            )
+
+            loaded = load_selected_features(
+                path
+            )
+
+            self.assertEqual(
+                features,
+                loaded
+            )
 if __name__ == "__main__":
     unittest.main()

@@ -60,7 +60,8 @@ def load_dataset(file_path=None):
 
     # Load the default training dataset if no path is provided
     if file_path is None:
-        file_path = Path("data/raw/KDDTrain+.txt")
+        project_root = Path(__file__).resolve().parents[2]
+        file_path = project_root / "data" / "raw" / "KDDTrain+.txt"
 
     if not file_path:
         raise ValueError("Dataset path cannot be empty.")
