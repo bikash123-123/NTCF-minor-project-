@@ -15,6 +15,7 @@ venv/
 data/raw/*.csv
 data/raw/*.txt
 data/processed/*
+!data/processed/README.md
 
 # Models
 *.pkl
