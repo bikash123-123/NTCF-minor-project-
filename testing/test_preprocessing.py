@@ -9,6 +9,9 @@ from ml.preprocessing.scaler import (
     save_scaler,
     load_scaler,
 )
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+from ml.preprocessing.preprocessing_pipeline import preprocess_dataset
 
 import pandas as pd
 from sklearn.preprocessing import OneHotEncoder
@@ -239,5 +242,73 @@ class TestScaler(unittest.TestCase):
                 loaded,
                 StandardScaler
             )
+class TestPreprocessingPipeline(unittest.TestCase):
+    """Unit tests for the complete preprocessing pipeline."""
+
+    @classmethod
+    def setUpClass(cls):
+        (
+            cls.X_train,
+            cls.X_test,
+            cls.y_train,
+            cls.y_test,
+            cls.encoder,
+            cls.scaler,
+        ) = preprocess_dataset()
+
+    def test_pipeline_returns_data(self):
+        """Pipeline returns processed datasets."""
+
+        self.assertIsInstance(self.X_train, pd.DataFrame)
+        self.assertIsInstance(self.X_test, pd.DataFrame)
+
+        self.assertIsInstance(self.y_train, pd.Series)
+        self.assertIsInstance(self.y_test, pd.Series)
+
+    def test_train_test_not_empty(self):
+        """Training and test datasets should not be empty."""
+
+        self.assertFalse(self.X_train.empty)
+        self.assertFalse(self.X_test.empty)
+
+        self.assertGreater(len(self.y_train), 0)
+        self.assertGreater(len(self.y_test), 0)
+
+    def test_feature_count_consistency(self):
+        """Training and test feature counts must match."""
+
+        self.assertEqual(
+            self.X_train.shape[1],
+            self.X_test.shape[1]
+        )
+
+    def test_target_count_matches_features(self):
+        """Number of samples must match targets."""
+
+        self.assertEqual(
+            len(self.X_train),
+            len(self.y_train)
+        )
+
+        self.assertEqual(
+            len(self.X_test),
+            len(self.y_test)
+        )
+
+    def test_encoder_created(self):
+        """Pipeline returns a fitted encoder."""
+
+        self.assertIsInstance(
+            self.encoder,
+            OneHotEncoder
+        )
+
+    def test_scaler_created(self):
+        """Pipeline returns a fitted scaler."""
+
+        self.assertIsInstance(
+            self.scaler,
+            StandardScaler
+        )
 if __name__ == "__main__":
     unittest.main()
