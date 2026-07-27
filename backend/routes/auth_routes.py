@@ -1,65 +1,205 @@
+"""
+Authentication API endpoints.
+"""
+
 from flask import Blueprint, jsonify, request
 
-from backend.services.auth_service import AuthService
+from backend.services.auth_service import (
+    authenticate_user,
+    create_token,
+    register_user,
+    require_authentication,
+    revoke_token,
+)
+
 
 auth_bp = Blueprint(
     "auth",
     __name__,
-    url_prefix="/auth"
+    url_prefix="/auth",
 )
-
-auth_service = AuthService()
 
 
 @auth_bp.route("/health", methods=["GET"])
 def auth_health():
+    """
+    Authentication service health check.
+    """
+
     return jsonify(
         {
             "module": "authentication",
-            "status": "running"
+            "status": "running",
         }
+    ), 200
+
+
+@auth_bp.route("/register", methods=["POST"])
+def register():
+    """
+    Register a new user.
+
+    Expected JSON body:
+
+    {
+        "username": "testuser",
+        "password": "TestPassword123",
+        "email": "testuser@example.com"
+    }
+    """
+
+    payload = request.get_json(silent=True)
+
+    # ----------------------------------------
+    # Validate JSON body
+    # ----------------------------------------
+
+    if not isinstance(payload, dict):
+        return jsonify(
+            {
+                "success": False,
+                "error": "JSON object expected.",
+            }
+        ), 400
+
+    # ----------------------------------------
+    # Read registration fields
+    # ----------------------------------------
+
+    username = payload.get("username")
+    password = payload.get("password")
+    email = payload.get("email")
+
+    # ----------------------------------------
+    # Register user
+    # ----------------------------------------
+
+    result = register_user(
+        username,
+        password,
+        email=email,
     )
+
+    # ----------------------------------------
+    # Registration failed
+    # ----------------------------------------
+
+    if not result["success"]:
+        return jsonify(result), 400
+
+    # ----------------------------------------
+    # Registration successful
+    # ----------------------------------------
+
+    return jsonify(result), 201
 
 
 @auth_bp.route("/login", methods=["POST"])
 def login():
+    """
+    Authenticate a user and return an access token.
 
-    data = request.get_json()
+    Expected JSON body:
 
-    if not data:
+    {
+        "username": "testuser",
+        "password": "TestPassword123"
+    }
+    """
+
+    payload = request.get_json(silent=True)
+
+    # ----------------------------------------
+    # Validate JSON body
+    # ----------------------------------------
+
+    if not isinstance(payload, dict):
         return jsonify(
             {
-                "message": "Request body is required."
+                "success": False,
+                "error": "JSON object expected.",
             }
         ), 400
 
-    username = data.get("username")
-    password = data.get("password")
+    # ----------------------------------------
+    # Read login fields
+    # ----------------------------------------
 
-    if not username or not password:
+    username = payload.get("username")
+    password = payload.get("password")
 
-        return jsonify(
-            {
-                "message": "Username and password are required."
-            }
-        ), 400
+    # ----------------------------------------
+    # Authenticate user
+    # ----------------------------------------
 
-    result = auth_service.login(
+    result = authenticate_user(
         username,
         password,
     )
 
-    if not result["success"]:
+    # ----------------------------------------
+    # Authentication failed
+    # ----------------------------------------
 
+    if not result["success"]:
         return jsonify(
             {
-                "message": result["message"]
+                "success": False,
+                "error": "Invalid credentials.",
             }
         ), 401
 
+    # ----------------------------------------
+    # Create authentication token
+    # ----------------------------------------
+
+    token = create_token(username)
+
     return jsonify(
         {
-            "message": "Login successful",
-            "token": result["token"]
+            "success": True,
+            "message": "Authentication successful.",
+            "token": token,
+        }
+    ), 200
+
+
+@auth_bp.route("/logout", methods=["POST"])
+@require_authentication
+def logout(username):
+    """
+    Revoke the current authentication token.
+    """
+
+    authorization = request.headers.get(
+        "Authorization",
+        "",
+    )
+
+    # Authorization is already validated by
+    # require_authentication.
+    token = authorization[7:].strip()
+
+    revoke_token(token)
+
+    return jsonify(
+        {
+            "success": True,
+            "message": "Logout successful.",
+        }
+    ), 200
+
+
+@auth_bp.route("/me", methods=["GET"])
+@require_authentication
+def current_user(username):
+    """
+    Return the currently authenticated user.
+    """
+
+    return jsonify(
+        {
+            "success": True,
+            "username": username,
         }
     ), 200
