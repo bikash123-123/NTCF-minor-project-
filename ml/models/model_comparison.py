@@ -16,7 +16,9 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import joblib
 import pandas as pd
+
 from sklearn.metrics import (
     accuracy_score,
     f1_score,
@@ -24,24 +26,14 @@ from sklearn.metrics import (
     recall_score,
 )
 
-from ml.models import (
-    decision_tree_model,
-    random_forest_model,
-    svm_model,
-)
-
-from ml.training.save_models import (
-    load_trained_model,
-)
+from ml.models.random_forest_model import RandomForestModel
 
 
 # ---------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------
 
-BASE_DIR = Path(
-    __file__
-).resolve().parents[2]
+BASE_DIR = Path(__file__).resolve().parents[2]
 
 TEST_DATA = (
     BASE_DIR
@@ -50,6 +42,26 @@ TEST_DATA = (
     / "test_processed.csv"
 )
 
+ARTIFACT_DIR = (
+    BASE_DIR
+    / "ml"
+    / "artifacts"
+)
+
+DECISION_TREE_MODEL = (
+    ARTIFACT_DIR
+    / "decision_tree_model.pkl"
+)
+
+RANDOM_FOREST_MODEL = (
+    ARTIFACT_DIR
+    / "random_forest_model.pkl"
+)
+
+SVM_MODEL = (
+    ARTIFACT_DIR
+    / "svm_model.pkl"
+)
 
 TARGET_COLUMN = "label"
 
@@ -70,19 +82,13 @@ def load_test_data(
         X_test, y_test
     """
 
-    test_df = pd.read_csv(
-        test_path
-    )
+    test_df = pd.read_csv(test_path)
 
     X_test = test_df.drop(
-        columns=[
-            TARGET_COLUMN
-        ]
+        columns=[TARGET_COLUMN]
     )
 
-    y_test = test_df[
-        TARGET_COLUMN
-    ]
+    y_test = test_df[TARGET_COLUMN]
 
     return X_test, y_test
 
@@ -95,38 +101,82 @@ def load_models():
     """
     Load all three trained NTCF models.
 
+    Decision Tree:
+        Loaded using joblib.
+
+    Random Forest:
+        Loaded using RandomForestModel.load().
+
+    SVM:
+        Loaded using joblib.
+
     Returns
     -------
     dict
         Mapping of model names to trained models.
     """
 
-    models = {
+    print("Loading trained models...")
 
-        "Decision Tree": (
-            load_trained_model(
-                module=decision_tree_model,
-                model_name="decision_tree",
-            )
-        ),
+    # -------------------------------------------------
+    # Decision Tree
+    # -------------------------------------------------
 
-        "Random Forest": (
-            load_trained_model(
-                module=random_forest_model,
-                model_name="random_forest",
-            )
-        ),
+    if not DECISION_TREE_MODEL.exists():
+        raise FileNotFoundError(
+            f"Decision Tree model not found at: "
+            f"{DECISION_TREE_MODEL}"
+        )
 
-        "SVM": (
-            load_trained_model(
-                module=svm_model,
-                model_name="svm",
-            )
-        ),
+    decision_tree = joblib.load(
+        DECISION_TREE_MODEL
+    )
 
+    print(
+        "Decision Tree loaded successfully."
+    )
+
+    # -------------------------------------------------
+    # Random Forest
+    # -------------------------------------------------
+
+    if not RANDOM_FOREST_MODEL.exists():
+        raise FileNotFoundError(
+            f"Random Forest model not found at: "
+            f"{RANDOM_FOREST_MODEL}"
+        )
+
+    random_forest = RandomForestModel.load(
+        RANDOM_FOREST_MODEL
+    )
+
+    print(
+        "Random Forest loaded successfully."
+    )
+
+    # -------------------------------------------------
+    # SVM
+    # -------------------------------------------------
+
+    if not SVM_MODEL.exists():
+        raise FileNotFoundError(
+            f"SVM model not found at: "
+            f"{SVM_MODEL}"
+        )
+
+    svm = joblib.load(
+        SVM_MODEL
+    )
+
+    print(
+        "SVM loaded successfully."
+    )
+
+    return {
+        "Decision Tree": decision_tree,
+        "Random Forest": random_forest,
+        "SVM": svm,
     }
-
-    return models
 
 
 # ---------------------------------------------------------------------
@@ -145,6 +195,10 @@ def evaluate_model(
     All models use the same test data and
     the same evaluation methodology.
     """
+
+    print(
+        f"\nEvaluating {model_name}..."
+    )
 
     start_time = time.perf_counter()
 
@@ -214,19 +268,12 @@ def compare_models(
     """
 
     required_models = {
-
         "Decision Tree",
-
         "Random Forest",
-
         "SVM",
-
     }
 
-    if set(
-        models.keys()
-    ) != required_models:
-
+    if set(models.keys()) != required_models:
         raise ValueError(
             "Models must contain exactly: "
             "Decision Tree, Random Forest, and SVM."
@@ -235,32 +282,19 @@ def compare_models(
     results = []
 
     for model_name in [
-
         "Decision Tree",
-
         "Random Forest",
-
         "SVM",
-
     ]:
 
         result = evaluate_model(
-
-            model=models[
-                model_name
-            ],
-
+            model=models[model_name],
             model_name=model_name,
-
             X_test=X_test,
-
             y_test=y_test,
-
         )
 
-        results.append(
-            result
-        )
+        results.append(result)
 
     return pd.DataFrame(
         results
@@ -283,15 +317,12 @@ def identify_best_model(
     """
 
     if results.empty:
-
         raise ValueError(
             "Comparison results are empty."
         )
 
     best_index = (
-        results[
-            "f1_score"
-        ].idxmax()
+        results["f1_score"].idxmax()
     )
 
     return results.loc[
@@ -305,24 +336,29 @@ def identify_best_model(
 
 def run_model_comparison():
     """
-    Load models and test data, compare all models,
+    Load models and test data,
+    compare all models,
     and identify the best-performing model.
     """
 
     models = load_models()
 
+    print(
+        "\nLoading test dataset..."
+    )
+
     X_test, y_test = (
         load_test_data()
     )
 
+    print(
+        f"Test samples: {len(X_test)}"
+    )
+
     results = compare_models(
-
         models=models,
-
         X_test=X_test,
-
         y_test=y_test,
-
     )
 
     best_model = (
@@ -340,31 +376,90 @@ def run_model_comparison():
 
 if __name__ == "__main__":
 
-    results, best_model = (
-        run_model_comparison()
-    )
+    try:
 
-    print(
-        "\nModel Comparison Results:"
-    )
-
-    print(
-        results.to_string(
-            index=False
+        results, best_model = (
+            run_model_comparison()
         )
-    )
 
-    print(
-        "\nBest Performing Model:"
-    )
+        print(
+            "\n"
+            + "=" * 70
+        )
 
-    print(
-        best_model[
-            "model"
-        ]
-    )
+        print(
+            "MODEL COMPARISON RESULTS"
+        )
 
-    print(
-        f"F1-score: "
-        f"{best_model['f1_score']:.4f}"
-    )
+        print(
+            "=" * 70
+        )
+
+        print(
+            results.to_string(
+                index=False
+            )
+        )
+
+        print(
+            "\n"
+            + "=" * 70
+        )
+
+        print(
+            "BEST PERFORMING MODEL"
+        )
+
+        print(
+            "=" * 70
+        )
+
+        print(
+            f"Model: "
+            f"{best_model['model']}"
+        )
+
+        print(
+            f"Accuracy: "
+            f"{best_model['accuracy']:.4f}"
+        )
+
+        print(
+            f"Precision: "
+            f"{best_model['precision']:.4f}"
+        )
+
+        print(
+            f"Recall: "
+            f"{best_model['recall']:.4f}"
+        )
+
+        print(
+            f"F1-score: "
+            f"{best_model['f1_score']:.4f}"
+        )
+
+        print(
+            f"Prediction time: "
+            f"{best_model['prediction_time_seconds']:.6f} seconds"
+        )
+
+        print(
+            "=" * 70
+        )
+
+    except FileNotFoundError as error:
+
+        print(
+            "\nMODEL OR DATA FILE NOT FOUND:"
+        )
+
+        print(error)
+
+    except Exception as error:
+
+        print(
+            "\nUNEXPECTED ERROR:"
+        )
+
+        print(error)
