@@ -4,22 +4,23 @@ threat_detector.py
 Threat detection engine for NTCF.
 """
 
-from detection.prediction_service import (
-    PredictionService,
-)
+from detection.prediction_service import PredictionService
 
 
 class ThreatDetector:
 
-    def __init__(self):
-
-        self.predictor = PredictionService()
+    def __init__(
+        self,
+        model_name="random_forest",
+    ):
+        self.predictor = PredictionService(
+            model_name=model_name
+        )
 
     def detect(
         self,
         features,
     ):
-
         try:
 
             prediction, confidence = (
@@ -28,39 +29,26 @@ class ThreatDetector:
                 )
             )
 
-            if prediction == 0:
+            prediction_str = str(prediction)
 
+            if prediction_str.lower() == "normal":
                 label = "Normal"
-
             else:
-
                 label = "Threat"
 
             return {
-
-                "prediction": int(
-                    prediction
-                ),
-
+                "prediction": prediction_str,
                 "label": label,
-
                 "confidence": round(
                     confidence,
                     4,
                 ),
-
                 "status": "success",
-
             }
 
         except Exception as error:
 
             return {
-
                 "status": "error",
-
-                "message": str(
-                    error
-                ),
-
+                "message": str(error),
             }
