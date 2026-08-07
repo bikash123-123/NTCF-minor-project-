@@ -1,0 +1,201 @@
+/* =========================================================
+   NTCF SECURITY OPERATIONS CENTER
+   Global Dashboard Styling
+   ========================================================= */
+
+
+/* ---------------------------------------------------------
+   Main Application
+   --------------------------------------------------------- */
+
+.stApp {
+    background-color: #080d14;
+}
+
+
+/* ---------------------------------------------------------
+   Main Container
+   --------------------------------------------------------- */
+
+.block-container {
+    max-width: 1400px;
+    padding-top: 2rem;
+    padding-bottom: 3rem;
+}
+
+
+/* ---------------------------------------------------------
+   General Text
+   --------------------------------------------------------- */
+
+h1 {
+    color: #f5f7fa;
+}
+
+h2 {
+    color: #e8eef5;
+}
+
+h3 {
+    color: #dce5ee;
+}
+
+p {
+    color: #9ba9b8;
+}
+
+
+/* ---------------------------------------------------------
+   Sidebar
+   --------------------------------------------------------- */
+
+section[data-testid="stSidebar"] {
+    background-color: #0b121b;
+    border-right: 1px solid #223346;
+}
+
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3 {
+    color: #f5f7fa;
+}
+
+
+/* ---------------------------------------------------------
+   Sidebar Navigation
+   --------------------------------------------------------- */
+
+section[data-testid="stSidebar"] .stRadio label {
+    color: #b7c4d1;
+}
+
+section[data-testid="stSidebar"] .stRadio label:hover {
+    color: #ffffff;
+}
+
+
+/* ---------------------------------------------------------
+   Text Inputs
+   --------------------------------------------------------- */
+
+div[data-baseweb="input"] {
+    background-color: #111a25;
+    border-radius: 8px;
+    border: 1px solid #2a4055;
+}
+
+div[data-baseweb="input"]:focus-within {
+    border-color: #3b9cff;
+}
+
+
+/* ---------------------------------------------------------
+   Buttons
+   --------------------------------------------------------- */
+
+.stButton > button {
+    min-height: 44px;
+
+    border-radius: 8px;
+
+    font-weight: 600;
+
+    border: 1px solid #31516d;
+
+    background-color: #122131;
+
+    color: #ffffff;
+}
+
+.stButton > button:hover {
+    border-color: #4da3ff;
+
+    background-color: #183149;
+
+    color: #ffffff;
+}
+
+
+/* Primary Button */
+
+button[kind="primary"] {
+    background-color: #1769aa;
+
+    border: 1px solid #2789d1;
+
+    color: white;
+}
+
+button[kind="primary"]:hover {
+    background-color: #1d7fc2;
+}
+
+
+/* ---------------------------------------------------------
+   Login Page
+   --------------------------------------------------------- */
+
+/*
+   Streamlit's normal content container is used.
+   These selectors improve the login appearance without
+   injecting HTML into the page.
+*/
+
+div[data-testid="stVerticalBlock"] {
+    gap: 1rem;
+}
+
+
+/* ---------------------------------------------------------
+   Divider
+   --------------------------------------------------------- */
+
+hr {
+    border-color: #243647;
+}
+
+
+/* ---------------------------------------------------------
+   Metrics
+   --------------------------------------------------------- */
+
+div[data-testid="stMetric"] {
+    background-color: #101a25;
+
+    border: 1px solid #24384c;
+
+    border-radius: 10px;
+
+    padding: 18px;
+}
+
+
+/* ---------------------------------------------------------
+   Dataframes
+   --------------------------------------------------------- */
+
+div[data-testid="stDataFrame"] {
+    border: 1px solid #26394d;
+
+    border-radius: 10px;
+
+    overflow: hidden;
+}
+
+
+/* ---------------------------------------------------------
+   Alerts
+   --------------------------------------------------------- */
+
+div[data-testid="stAlert"] {
+    border-radius: 8px;
+}
+
+
+/* ---------------------------------------------------------
+   Success / Warning / Error
+   --------------------------------------------------------- */
+
+div[data-testid="stAlert"] p {
+    color: inherit;
+}
