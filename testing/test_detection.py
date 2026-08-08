@@ -23,6 +23,8 @@ from detection.confidence_calculator import calculate_confidence
 from detection.threat_detector import ThreatDetector
 from backend.services.detection_service import detect_threat
 
+from ml.config.columns import FEATURE_COLUMNS
+
 
 # ---------------------------------------------------------------------
 # Test Features
@@ -31,10 +33,10 @@ from backend.services.detection_service import detect_threat
 @pytest.fixture
 def sample_features():
     """
-    Small feature DataFrame used by detection tests.
+    Small feature DataFrame used by detector-level tests.
 
-    The detector is mocked in service-level tests, so the exact
-    trained-model feature schema is not required here.
+    These tests mock PredictionService, so the exact
+    trained-model schema is not required here.
     """
 
     return pd.DataFrame(
@@ -47,18 +49,38 @@ def sample_features():
 
 
 @pytest.fixture
-def feature_payload():
+def raw_features():
     """
-    Valid detection API payload.
+    Complete raw NSL-KDD feature dictionary.
+
+    The production preprocessing layer requires
+    all 41 raw features before encoding/scaling.
+    """
+
+    return {
+        column: (
+            "tcp"
+            if column == "protocol_type"
+            else "http"
+            if column == "service"
+            else "SF"
+            if column == "flag"
+            else 0
+        )
+        for column in FEATURE_COLUMNS
+    }
+
+
+@pytest.fixture
+def feature_payload(raw_features):
+    """
+    Valid detection API payload containing
+    the complete raw NSL-KDD feature schema.
     """
 
     return {
         "model_name": "decision_tree",
-        "features": {
-            "duration": 1,
-            "src_bytes": 100,
-            "dst_bytes": 50,
-        },
+        "features": raw_features,
     }
 
 
@@ -205,7 +227,8 @@ class TestThreatDetector:
 
     def test_detector_initializes_with_default_model(self):
         """
-        Verify ThreatDetector creates a predictor.
+        Verify ThreatDetector uses Decision Tree
+        when no model is explicitly provided.
         """
 
         with patch(
@@ -215,7 +238,7 @@ class TestThreatDetector:
             detector = ThreatDetector()
 
             prediction_service.assert_called_once_with(
-                model_name="random_forest"
+                model_name="decision_tree"
             )
 
             assert detector.predictor is not None
@@ -517,15 +540,12 @@ class TestDetectionService:
             result["message"]
         )
 
-    def test_empty_features_are_accepted_by_service(
+    def test_empty_features_are_rejected(
         self,
     ):
         """
-        Verify that the service reaches the detector
-        when an empty feature object is supplied.
-
-        Feature-schema validation belongs to the model/
-        preprocessing layer, not this service.
+        Verify that an empty feature object is rejected
+        by the preprocessing layer.
         """
 
         payload = {
@@ -533,20 +553,12 @@ class TestDetectionService:
             "features": {},
         }
 
-        with patch(
-            "backend.services.detection_service.ThreatDetector"
-        ) as detector_class:
+        result = detect_threat(
+            payload
+        )
 
-            detector_class.return_value.detect.return_value = {
-                "status": "success",
-                "prediction": "normal",
-                "label": "Normal",
-                "confidence": 0.80,
-            }
-
-            result = detect_threat(
-                payload
-            )
-
-        assert result["success"] is True
-        assert result["status_code"] == 200
+        assert result["success"] is False
+        assert result["status_code"] == 400
+        assert "Missing required features:" in (
+            result["message"]
+        )

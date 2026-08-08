@@ -21,7 +21,7 @@ def extract_flow_features(parsed_packets):
     Parameters
     ----------
     parsed_packets : list
-        List of packet dictionaries returned by packet_parser.py
+        List of packet dictionaries returned by packet_parser.py.
 
     Returns
     -------
@@ -38,13 +38,11 @@ def extract_flow_features(parsed_packets):
     for packet in parsed_packets:
 
         flow_key = (
-
             packet["src_ip"],
             packet["dst_ip"],
             packet["src_port"],
             packet["dst_port"],
             packet["protocol"],
-
         )
 
         flows[flow_key].append(packet)
@@ -65,6 +63,10 @@ def extract_flow_features(parsed_packets):
         first_packet = packets[0]
         last_packet = packets[-1]
 
+        # -----------------------------------------------------
+        # Basic flow information
+        # -----------------------------------------------------
+
         duration = (
             last_packet["timestamp"]
             - first_packet["timestamp"]
@@ -83,6 +85,10 @@ def extract_flow_features(parsed_packets):
             else 0
         )
 
+        # -----------------------------------------------------
+        # Rate calculations
+        # -----------------------------------------------------
+
         if duration > 0:
 
             packet_rate = (
@@ -99,49 +105,63 @@ def extract_flow_features(parsed_packets):
 
             byte_rate = 0
 
+        # -----------------------------------------------------
+        # Preserve service and TCP flag information
+        #
+        # These values are already produced by packet_parser /
+        # live_capture, so we should not discard them here.
+        # -----------------------------------------------------
+
+        service = first_packet.get(
+            "service",
+            "unknown",
+        )
+
+        flag = first_packet.get(
+            "flag",
+            "OTH",
+        )
+
+        # -----------------------------------------------------
+        # Build flow record
+        # -----------------------------------------------------
+
         flow_features.append(
-
             {
+                "src_ip": first_packet["src_ip"],
 
-                "src_ip":
-                    first_packet["src_ip"],
+                "dst_ip": first_packet["dst_ip"],
 
-                "dst_ip":
-                    first_packet["dst_ip"],
+                "src_port": first_packet["src_port"],
 
-                "src_port":
-                    first_packet["src_port"],
+                "dst_port": first_packet["dst_port"],
 
-                "dst_port":
-                    first_packet["dst_port"],
+                "protocol": first_packet["protocol"],
 
-                "protocol":
-                    first_packet["protocol"],
+                "service": service,
 
-                "flow_duration":
-                    duration,
+                "flag": flag,
 
-                "packet_count":
-                    packet_count,
+                "flow_duration": duration,
 
-                "total_bytes":
-                    total_bytes,
+                "packet_count": packet_count,
 
-                "avg_packet_size":
-                    avg_packet_size,
+                "total_bytes": total_bytes,
 
-                "packet_rate":
-                    packet_rate,
+                "avg_packet_size": avg_packet_size,
 
-                "byte_rate":
-                    byte_rate,
+                "packet_rate": packet_rate,
 
+                "byte_rate": byte_rate,
             }
-
         )
 
     return pd.DataFrame(flow_features)
 
+
+# -----------------------------------------------------------------
+# Manual execution
+# -----------------------------------------------------------------
 
 if __name__ == "__main__":
 
@@ -153,16 +173,33 @@ if __name__ == "__main__":
         packet_count=10
     )
 
-    print(f"Packets Captured: {len(packets)}")
+    print(
+        f"Packets Captured: {len(packets)}"
+    )
 
-    print("\nExtracting flow features...\n")
+    print(
+        "\nExtracting flow features...\n"
+    )
 
     features = extract_flow_features(
         packets
     )
 
-    print("\nNumber of Flows:", len(features))
-    print("\nExtracted Flow Features:\n")
-    print(features.to_string(index=False))
+    print(
+        "\nNumber of Flows:",
+        len(features),
+    )
 
-    print("\nExtraction Complete.")
+    print(
+        "\nExtracted Flow Features:\n"
+    )
+
+    print(
+        features.to_string(
+            index=False
+        )
+    )
+
+    print(
+        "\nExtraction Complete."
+    )

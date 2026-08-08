@@ -11,7 +11,7 @@ class ThreatDetector:
 
     def __init__(
         self,
-        model_name="random_forest",
+        model_name="decision_tree",
     ):
         self.predictor = PredictionService(
             model_name=model_name
@@ -29,9 +29,14 @@ class ThreatDetector:
                 )
             )
 
-            prediction_str = str(prediction)
+            prediction_str = str(
+                prediction
+            )
 
-            if prediction_str.lower() == "normal":
+            if (
+                prediction_str.lower()
+                == "normal"
+            ):
                 label = "Normal"
             else:
                 label = "Threat"

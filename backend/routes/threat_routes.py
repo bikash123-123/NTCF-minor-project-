@@ -1,6 +1,4 @@
-"""
-threat_routes.py
-
+﻿"""
 Threat API endpoints.
 """
 
@@ -13,6 +11,15 @@ from backend.services.threat_service import (
     get_threat,
 )
 
+from backend.services.auth_service import (
+    require_authentication,
+)
+
+
+# ---------------------------------------------------------
+# Blueprint
+# ---------------------------------------------------------
+
 threat_bp = Blueprint(
     "threat",
     __name__,
@@ -20,27 +27,48 @@ threat_bp = Blueprint(
 )
 
 
+# ---------------------------------------------------------
+# Health check
+# ---------------------------------------------------------
+
 @threat_bp.route("/health", methods=["GET"])
 def health():
+    """
+    Threat service health check.
+    """
 
     return jsonify(
         {
             "module": "threat",
             "status": "running",
         }
-    )
+    ), 200
 
+
+# ---------------------------------------------------------
+# Get all threats
+# ---------------------------------------------------------
 
 @threat_bp.route("", methods=["GET"])
-def retrieve_threats():
+@require_authentication
+def retrieve_threats(username):
+    """
+    Retrieve all threat events.
 
-    prediction = request.args.get("prediction")
+    Authentication is required.
+    """
+
+    prediction = request.args.get(
+        "prediction"
+    )
 
     confidence_level = request.args.get(
         "confidence_level"
     )
 
-    action = request.args.get("action")
+    action = request.args.get(
+        "action"
+    )
 
     response = get_all_threats(
         prediction=prediction,
@@ -48,16 +76,35 @@ def retrieve_threats():
         action=action,
     )
 
-    status_code = response.pop("status_code")
+    status_code = response.pop(
+        "status_code",
+        200,
+    )
 
     return jsonify(response), status_code
 
 
-@threat_bp.route("/<int:index>", methods=["GET"])
-def retrieve_threat(index):
+# ---------------------------------------------------------
+# Get one threat
+# ---------------------------------------------------------
+
+@threat_bp.route(
+    "/<int:index>",
+    methods=["GET"],
+)
+@require_authentication
+def retrieve_threat(username, index):
+    """
+    Retrieve one threat event by zero-based index.
+
+    Authentication is required.
+    """
 
     response = get_threat(index)
 
-    status_code = response.pop("status_code")
+    status_code = response.pop(
+        "status_code",
+        200,
+    )
 
     return jsonify(response), status_code
