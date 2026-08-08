@@ -69,9 +69,42 @@ def test_dashboard_statistics(client):
 
 
 def test_threat_list(client):
-    response = client.get("/api/threats")
-    assert response.status_code in (200, 500)
+    """
+    Verify that an authenticated user can retrieve the threat list.
+    """
 
+    login = client.post(
+        "/auth/login",
+        json={
+            "username": "testuser123",
+            "password": "TestPassword123",
+        },
+    )
+
+    assert login.status_code == 200
+
+    login_data = login.get_json()
+
+    assert login_data is not None
+    assert "token" in login_data
+
+    token = login_data["token"]
+
+    response = client.get(
+        "/api/threats",
+        headers={
+            "Authorization": f"Bearer {token}",
+        },
+    )
+
+    assert response.status_code == 200
+
+    data = response.get_json()
+
+    assert data is not None
+    assert data.get("success") is True
+    assert "data" in data
+    assert "count" in data
 
 def test_threat_invalid_index(client):
     response = client.get("/api/threats/not-a-number")

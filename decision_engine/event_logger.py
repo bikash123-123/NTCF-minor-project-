@@ -4,7 +4,7 @@ event_logger.py
 Logging utilities for threat detection events.
 """
 
-from datetime import datetime
+from datetime import datetime, UTC
 import json
 from pathlib import Path
 
@@ -28,7 +28,7 @@ def log_event(event):
     )
 
     log_entry = {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         **event,
     }
 

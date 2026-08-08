@@ -26,7 +26,7 @@ ARTIFACT_DIR = Path("ml/artifacts")
 
 
 def load_selected_model(
-    model_name="random_forest",
+    model_name="decision_tree",
 ):
     """
     Load the selected trained model.
@@ -64,9 +64,9 @@ def load_selected_model(
 class PredictionService:
 
     def __init__(
-        self,
-        model_name="random_forest",
-    ):
+    self,
+    model_name="decision_tree",
+   ):
 
         self.model = load_selected_model(
             model_name
