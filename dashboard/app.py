@@ -17,10 +17,6 @@ from pages.blocked_ips import show_blocked_ips
 from pages.reports import show_reports
 
 
-# =========================================================
-# Page Configuration
-# =========================================================
-
 st.set_page_config(
     page_title="NTCF Security Operations Center",
     page_icon="🛡️",
@@ -29,19 +25,11 @@ st.set_page_config(
 )
 
 
-# =========================================================
-# Load CSS
-# =========================================================
-
 BASE_DIR = Path(__file__).resolve().parent
-
 CSS_PATH = BASE_DIR / "assets" / "style.css"
 
 if CSS_PATH.exists():
-
-    css = CSS_PATH.read_text(
-        encoding="utf-8"
-    )
+    css = CSS_PATH.read_text(encoding="utf-8")
 
     st.markdown(
         f"<style>{css}</style>",
@@ -49,29 +37,20 @@ if CSS_PATH.exists():
     )
 
 
-# =========================================================
-# Session State
-# =========================================================
-
 if "logged_in" not in st.session_state:
-
     st.session_state.logged_in = False
 
+if "auth_token" not in st.session_state:
+    st.session_state.auth_token = None
 
-# =========================================================
-# Login
-# =========================================================
+if "username" not in st.session_state:
+    st.session_state.username = None
+
 
 if not st.session_state.logged_in:
-
     show_login()
-
     st.stop()
 
-
-# =========================================================
-# Sidebar
-# =========================================================
 
 with st.sidebar:
 
@@ -100,6 +79,11 @@ with st.sidebar:
 
     st.success("Dashboard Online")
 
+    if st.session_state.username:
+        st.caption(
+            f"Logged in as: {st.session_state.username}"
+        )
+
     st.divider()
 
     if st.button(
@@ -108,34 +92,23 @@ with st.sidebar:
     ):
 
         st.session_state.logged_in = False
+        st.session_state.auth_token = None
+        st.session_state.username = None
 
         st.rerun()
 
 
-# =========================================================
-# Page Routing
-# =========================================================
-
 if page == "Overview":
-
     show_overview()
 
-
 elif page == "Threats":
-
     show_threats()
 
-
 elif page == "Live Monitoring":
-
     show_live_monitoring()
 
-
 elif page == "Blocked IPs":
-
     show_blocked_ips()
 
-
 elif page == "Reports":
-
     show_reports()
