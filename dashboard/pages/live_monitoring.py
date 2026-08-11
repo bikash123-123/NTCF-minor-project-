@@ -20,6 +20,7 @@ from ml.config.columns import (
     CATEGORICAL_COLUMNS,
 )
 
+
 # =========================================================
 # Detection API
 # =========================================================
@@ -43,14 +44,19 @@ def build_default_features():
 
     for column in FEATURE_COLUMNS:
 
-        if column == "protocol_type":
-            features[column] = "tcp"
+        if column in CATEGORICAL_COLUMNS:
 
-        elif column == "service":
-            features[column] = "http"
+            if column == "protocol_type":
+                features[column] = "tcp"
 
-        elif column == "flag":
-            features[column] = "S0"
+            elif column == "service":
+                features[column] = "http"
+
+            elif column == "flag":
+                features[column] = "SF"
+
+            else:
+                features[column] = ""
 
         else:
             features[column] = 0
@@ -65,13 +71,6 @@ def build_default_features():
 def send_detection(model_name, features):
     """
     Send feature data to the NTCF Detection API.
-
-    Returns:
-        tuple:
-            (HTTP status code, response dictionary)
-
-        If the API cannot be reached:
-            (None, error dictionary)
     """
 
     payload = {
@@ -88,7 +87,6 @@ def send_detection(model_name, features):
         )
 
         try:
-
             data = response.json()
 
         except ValueError:
@@ -109,27 +107,6 @@ def send_detection(model_name, features):
 
 
 # =========================================================
-# Validate Features
-# =========================================================
-
-def validate_features(features):
-    """
-    Validate that all required NSL-KDD features are present.
-
-    Returns:
-        list of missing feature names.
-    """
-
-    missing_features = [
-        feature
-        for feature in FEATURE_COLUMNS
-        if feature not in features
-    ]
-
-    return missing_features
-
-
-# =========================================================
 # Live Monitoring Page
 # =========================================================
 
@@ -147,6 +124,8 @@ def show_live_monitoring():
     # =====================================================
     # API Status
     # =====================================================
+
+    st.subheader("🔌 Detection API Status")
 
     try:
 
@@ -209,22 +188,8 @@ def show_live_monitoring():
     st.subheader("📥 Network Feature Input")
 
     st.write(
-        "Enter the complete NSL-KDD feature set as JSON. "
-        "The NTCF detection API requires all "
-        f"{len(FEATURE_COLUMNS)} model features."
+        "Enter the complete NSL-KDD feature set as JSON."
     )
-
-    # -----------------------------------------------------
-    # Required Feature Information
-    # -----------------------------------------------------
-
-    st.info(
-        f"Required model features: {len(FEATURE_COLUMNS)}"
-    )
-
-    # -----------------------------------------------------
-    # Default Features
-    # -----------------------------------------------------
 
     default_features = build_default_features()
 
@@ -234,41 +199,16 @@ def show_live_monitoring():
             default_features,
             indent=4,
         ),
-        height=420,
+        height=450,
         help=(
-            "Enter all 41 NSL-KDD model features. "
-            "Categorical values include protocol_type, "
-            "service, and flag."
+            "Use the feature names defined in "
+            "ml.config.columns."
         ),
     )
 
-    # -----------------------------------------------------
-    # Show Feature Categories
-    # -----------------------------------------------------
-
-    with st.expander("📋 Required Feature List"):
-
-        st.write(
-            f"**Total features: {len(FEATURE_COLUMNS)}**"
-        )
-
-        st.write(
-            "### Categorical Features"
-        )
-
-        st.code(
-            ", ".join(CATEGORICAL_COLUMNS)
-        )
-
-        st.write(
-            "### All Model Features"
-        )
-
-        st.code(
-            "\n".join(FEATURE_COLUMNS)
-        )
-
-    st.divider()
+    st.caption(
+        f"Expected features: {len(FEATURE_COLUMNS)}"
+    )
 
     # =====================================================
     # Detection Button
@@ -299,7 +239,7 @@ def show_live_monitoring():
             return
 
         # -------------------------------------------------
-        # Validate JSON Object
+        # Validate JSON object
         # -------------------------------------------------
 
         if not isinstance(features, dict):
@@ -319,12 +259,14 @@ def show_live_monitoring():
             return
 
         # -------------------------------------------------
-        # Validate Required Features
+        # Validate feature names
         # -------------------------------------------------
 
-        missing_features = validate_features(
-            features
-        )
+        missing_features = [
+            column
+            for column in FEATURE_COLUMNS
+            if column not in features
+        ]
 
         if missing_features:
 
@@ -333,36 +275,36 @@ def show_live_monitoring():
             )
 
             st.code(
-                "\n".join(missing_features)
-            )
-
-            st.warning(
-                f"{len(missing_features)} feature(s) "
-                "are missing. Please provide the "
-                "complete NSL-KDD feature set."
+                json.dumps(
+                    missing_features,
+                    indent=4,
+                )
             )
 
             return
 
         # -------------------------------------------------
-        # Optional Warning for Extra Features
+        # Detect unexpected features
         # -------------------------------------------------
 
-        extra_features = [
-            key
-            for key in features
-            if key not in FEATURE_COLUMNS
+        unexpected_features = [
+            column
+            for column in features
+            if column not in FEATURE_COLUMNS
         ]
 
-        if extra_features:
+        if unexpected_features:
 
             st.warning(
-                "The following extra fields will be "
-                "sent to the API:"
+                "The following unexpected features "
+                "will be sent to the API:"
             )
 
             st.code(
-                "\n".join(extra_features)
+                json.dumps(
+                    unexpected_features,
+                    indent=4,
+                )
             )
 
         # -------------------------------------------------
@@ -401,40 +343,18 @@ def show_live_monitoring():
 
         if status_code >= 400:
 
-            st.error(
+            message = result.get(
+                "message",
                 result.get(
-                    "message",
+                    "error",
                     "Detection request failed.",
-                )
+                ),
             )
-
-            # Show full response for debugging.
-            with st.expander(
-                "🔎 View API Error Response"
-            ):
-
-                st.json(result)
-
-            return
-
-        # -------------------------------------------------
-        # Check API Success
-        # -------------------------------------------------
-
-        if result.get("success") is False:
 
             st.error(
-                result.get(
-                    "message",
-                    "Detection failed.",
-                )
+                f"Detection API error "
+                f"(HTTP {status_code}): {message}"
             )
-
-            with st.expander(
-                "🔎 View API Response"
-            ):
-
-                st.json(result)
 
             return
 
@@ -452,56 +372,41 @@ def show_live_monitoring():
             "🎯 Detection Result"
         )
 
-        # =================================================
+        # -------------------------------------------------
         # Result Metrics
-        # =================================================
+        # -------------------------------------------------
 
         col1, col2, col3 = st.columns(3)
 
-        # -------------------------------------------------
-        # Prediction
-        # -------------------------------------------------
-
         with col1:
-
-            prediction = result.get(
-                "prediction",
-                "Unknown",
-            )
 
             st.metric(
                 "Prediction",
-                str(prediction),
+                str(
+                    result.get(
+                        "prediction",
+                        "Unknown",
+                    )
+                ),
             )
-
-        # -------------------------------------------------
-        # Classification
-        # -------------------------------------------------
 
         with col2:
 
-            classification = result.get(
-                "label",
-                "Unknown",
-            )
-
             st.metric(
                 "Classification",
-                str(classification),
+                str(
+                    result.get(
+                        "label",
+                        "Unknown",
+                    )
+                ),
             )
-
-        # -------------------------------------------------
-        # Confidence
-        # -------------------------------------------------
 
         with col3:
 
             confidence = result.get(
                 "confidence",
-                result.get(
-                    "confidence_score",
-                    0,
-                ),
+                0,
             )
 
             try:
@@ -517,192 +422,66 @@ def show_live_monitoring():
 
                 confidence_value = 0.0
 
-            # Handle APIs returning 100 instead of 1.0.
-            if confidence_value > 1.0:
-
-                confidence_value /= 100.0
-
-            confidence_value = max(
-                0.0,
-                min(
-                    confidence_value,
-                    1.0,
-                ),
-            )
+            # Support both 0.85 and 85 formats.
+            if confidence_value > 1:
+                confidence_value /= 100
 
             st.metric(
                 "Confidence",
                 f"{confidence_value:.2%}",
             )
 
-        # =================================================
-        # Confidence Level
-        # =================================================
+        # -------------------------------------------------
+        # Additional Result Information
+        # -------------------------------------------------
 
-        confidence_level = result.get(
-            "confidence_level",
-            "unknown",
+        st.divider()
+
+        st.subheader(
+            "📊 Detection Details"
         )
 
-        st.info(
-            f"Confidence level: {confidence_level}"
-        )
+        result_col1, result_col2 = st.columns(2)
 
-        # =================================================
-        # Recommended Action
-        # =================================================
+        with result_col1:
 
-        action = result.get(
-            "action",
-            "unknown",
-        )
-
-        st.write(
-            f"**Recommended action:** `{action}`"
-        )
-
-        # =================================================
-        # Severity
-        # =================================================
-
-        severity = result.get(
-            "severity",
-            "unknown",
-        )
-
-        st.write(
-            f"**Severity:** `{severity}`"
-        )
-
-        # =================================================
-        # Firewall Result
-        # =================================================
-
-        firewall_result = result.get(
-            "firewall"
-        )
-
-        if firewall_result:
-
-            st.divider()
-
-            st.subheader(
-                "🛡️ Firewall Response"
+            st.write(
+                "**Model:**",
+                result.get(
+                    "model_name",
+                    model_name,
+                ),
             )
 
-            firewall_success = firewall_result.get(
-                "success",
-                False,
+            st.write(
+                "**Prediction:**",
+                result.get(
+                    "prediction",
+                    "Unknown",
+                ),
             )
 
-            if firewall_success:
+        with result_col2:
 
-                st.success(
-                    "Firewall action completed successfully."
-                )
-
-            else:
-
-                st.error(
-                    "Firewall action failed."
-                )
-
-            firewall_col1, firewall_col2 = st.columns(2)
-
-            with firewall_col1:
-
-                st.write(
-                    "**IP Address:**"
-                )
-
-                st.code(
-                    str(
-                        firewall_result.get(
-                            "ip_address",
-                            "Unknown",
-                        )
-                    )
-                )
-
-            with firewall_col2:
-
-                st.write(
-                    "**Status:**"
-                )
-
-                st.code(
-                    str(
-                        firewall_result.get(
-                            "status",
-                            "Unknown",
-                        )
-                    )
-                )
-
-            if firewall_result.get(
-                "reason"
-            ):
-
-                st.write(
-                    "**Reason:** "
-                    + str(
-                        firewall_result.get(
-                            "reason"
-                        )
-                    )
-                )
-
-            if "dry_run" in firewall_result:
-
-                st.write(
-                    "**Dry Run:** "
-                    + str(
-                        firewall_result.get(
-                            "dry_run"
-                        )
-                    )
-                )
-
-        # =================================================
-        # Database Result
-        # =================================================
-
-        database_result = result.get(
-            "database"
-        )
-
-        if database_result:
-
-            st.divider()
-
-            st.subheader(
-                "💾 Database Persistence"
+            st.write(
+                "**Label:**",
+                result.get(
+                    "label",
+                    "Unknown",
+                ),
             )
 
-            threat_event_id = database_result.get(
-                "threat_event_id"
+            st.write(
+                "**Confidence Level:**",
+                result.get(
+                    "confidence_level",
+                    "Unknown",
+                ),
             )
 
-            detection_result_id = database_result.get(
-                "detection_result_id"
-            )
-
-            if threat_event_id is not None:
-
-                st.write(
-                    f"Threat Event ID: `{threat_event_id}`"
-                )
-
-            if detection_result_id is not None:
-
-                st.write(
-                    f"Detection Result ID: "
-                    f"`{detection_result_id}`"
-                )
-
-        # =================================================
+        # -------------------------------------------------
         # Raw API Response
-        # =================================================
+        # -------------------------------------------------
 
         with st.expander(
             "🔎 View API Response"
