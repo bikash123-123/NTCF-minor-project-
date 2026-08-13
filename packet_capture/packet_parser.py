@@ -5,7 +5,7 @@ Reusable packet parsing module for the
 Network Threat Cognition Framework (NTCF).
 
 This module extracts useful information
-from captured network packets.
+from captured IPv4 network packets.
 """
 
 from scapy.layers.inet import IP, TCP, UDP
@@ -46,9 +46,6 @@ def _get_service(port):
 def _get_tcp_flag(tcp_layer):
     """
     Convert Scapy TCP flags into an NSL-KDD-style flag.
-
-    The mapping uses the most significant observed
-    TCP flag combination.
     """
 
     flags = str(tcp_layer.flags)
@@ -73,23 +70,32 @@ def _get_tcp_flag(tcp_layer):
 
 def parse_packet(packet):
     """
-    Parse a Scapy packet and extract useful information.
+    Parse a Scapy IPv4 packet.
 
-    Parameters
-    ----------
-    packet : scapy.packet.Packet
-        Captured network packet.
+    Packets without an IPv4 layer are ignored because
+    the NTCF flow pipeline requires source and destination
+    IPv4 addresses.
 
     Returns
     -------
-    dict
-        Parsed packet information.
+    dict or None
+        Parsed packet information, or None when the packet
+        is not an IPv4 packet.
     """
+
+    # -----------------------------------------------------
+    # Ignore non-IPv4 packets
+    # -----------------------------------------------------
+
+    if IP not in packet:
+        return None
+
+    ip_layer = packet[IP]
 
     packet_info = {
         "timestamp": packet.time,
-        "src_ip": None,
-        "dst_ip": None,
+        "src_ip": ip_layer.src,
+        "dst_ip": ip_layer.dst,
         "protocol": None,
         "src_port": None,
         "dst_port": None,
@@ -98,13 +104,9 @@ def parse_packet(packet):
         "packet_length": len(packet),
     }
 
-    if IP not in packet:
-        return packet_info
-
-    ip_layer = packet[IP]
-
-    packet_info["src_ip"] = ip_layer.src
-    packet_info["dst_ip"] = ip_layer.dst
+    # -----------------------------------------------------
+    # TCP
+    # -----------------------------------------------------
 
     if TCP in packet:
 
@@ -122,6 +124,10 @@ def parse_packet(packet):
             tcp_layer
         )
 
+    # -----------------------------------------------------
+    # UDP
+    # -----------------------------------------------------
+
     elif UDP in packet:
 
         udp_layer = packet[UDP]
@@ -135,6 +141,10 @@ def parse_packet(packet):
         )
 
         packet_info["flag"] = "SF"
+
+    # -----------------------------------------------------
+    # Other IPv4 protocol
+    # -----------------------------------------------------
 
     else:
 
