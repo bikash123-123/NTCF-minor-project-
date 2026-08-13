@@ -1,553 +1,212 @@
-"""
-NTCF Dashboard - Reports
-
-Issue #29
-
-Displays recorded NTCF threat events and allows
-the authenticated user to download a CSV report.
-"""
+"""Security reports backed by the existing Threat API."""
 
 import pandas as pd
-import requests
 import streamlit as st
+import requests
 
+from components.threat_families import add_threat_family
+from components.charts import (
+    action_chart,
+    confidence_chart,
+    category_bar_chart,
+    multi_timeline_chart,
+    numeric_confidence_chart,
+    prediction_chart,
+    top_values_chart,
+    severity_chart,
+)
 
-# =========================================================
-# Threat API
-# =========================================================
 
 THREAT_API = "http://127.0.0.1:5000/api/threats"
 
 
-# =========================================================
-# Authentication Helper
-# =========================================================
+def _flatten_events(data):
+    rows = []
+    for event in data:
+        row = dict(event)
+        detection = row.pop("detection", None) or {}
+        firewall = row.pop("firewall", None) or {}
+        for key, value in detection.items():
+            row.setdefault(key, value)
+        for key, value in firewall.items():
+            row.setdefault(key, value)
+        rows.append(row)
+    return pd.DataFrame(rows)
 
-def get_auth_headers():
-    """
-    Return authentication headers for backend API requests.
-    """
-
-    token = st.session_state.get("auth_token")
-
-    if not token:
-        return None
-
-    return {
-        "Authorization": f"Bearer {token}"
-    }
-
-
-# =========================================================
-# Get Threat Data
-# =========================================================
-
-def get_threat_data():
-    """
-    Retrieve threat events from the authenticated backend API.
-
-    Returns:
-        tuple:
-            data
-            status_code
-    """
-
-    headers = get_auth_headers()
-
-    if not headers:
-        return None, 401
-
-    try:
-
-        response = requests.get(
-            THREAT_API,
-            headers=headers,
-            timeout=5,
-        )
-
-    except requests.exceptions.ConnectionError:
-
-        return None, None
-
-    except requests.exceptions.Timeout:
-
-        return None, "timeout"
-
-    except requests.RequestException:
-
-        return None, None
-
-    # -----------------------------------------------------
-    # Authentication failure
-    # -----------------------------------------------------
-
-    if response.status_code == 401:
-
-        return None, 401
-
-    # -----------------------------------------------------
-    # Other API errors
-    # -----------------------------------------------------
-
-    if response.status_code != 200:
-
-        return None, response.status_code
-
-    # -----------------------------------------------------
-    # Parse JSON
-    # -----------------------------------------------------
-
-    try:
-
-        result = response.json()
-
-    except ValueError:
-
-        return None, "invalid_json"
-
-    # -----------------------------------------------------
-    # Extract data
-    # -----------------------------------------------------
-
-    data = result.get(
-        "data",
-        [],
-    )
-
-    if not isinstance(data, list):
-
-        data = []
-
-    return data, 200
-
-
-# =========================================================
-# Reports Page
-# =========================================================
 
 def show_reports():
-
-    st.title("📄 Security Reports")
-
-    st.caption(
-        "Generate reports from recorded NTCF threat events."
-    )
-
-    st.divider()
-
-    # =====================================================
-    # Authentication
-    # =====================================================
+    st.caption("REPORTING")
+    st.header("Security Reports")
+    st.caption("Filter, review and export recorded NTCF threat events.")
 
     token = st.session_state.get("auth_token")
-
     if not token:
-
-        st.error(
-            "🔐 Authentication required."
-        )
-
-        st.info(
-            "Please log in again to access security reports."
-        )
-
+        st.error("Authentication required.")
         return
 
-    # =====================================================
-    # Refresh
-    # =====================================================
-
-    col_refresh, col_space = st.columns(
-        [1, 5]
-    )
-
-    with col_refresh:
-
-        if st.button(
-            "🔄 Refresh",
-            use_container_width=True,
-        ):
-
-            st.rerun()
-
-    # =====================================================
-    # Retrieve Threat Data
-    # =====================================================
-
-    data, status_code = get_threat_data()
-
-    # =====================================================
-    # Backend Offline
-    # =====================================================
-
-    if status_code is None:
-
-        st.error(
-            "🔴 Unable to connect to the Threat API."
+    try:
+        response = requests.get(
+            THREAT_API,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=5,
         )
-
-        st.info(
-            "Make sure the Flask backend is running on "
-            "127.0.0.1:5000."
-        )
-
+    except requests.RequestException as exc:
+        st.error(f"Unable to connect to the Threat API: {exc}")
         return
 
-    # =====================================================
-    # Timeout
-    # =====================================================
-
-    if status_code == "timeout":
-
-        st.error(
-            "⏱️ Threat API request timed out."
-        )
-
-        return
-
-    # =====================================================
-    # Invalid JSON
-    # =====================================================
-
-    if status_code == "invalid_json":
-
-        st.error(
-            "⚠️ The Threat API returned an invalid response."
-        )
-
-        return
-
-    # =====================================================
-    # Authentication Expired
-    # =====================================================
-
-    if status_code == 401:
-
-        st.error(
-            "🔐 Authentication expired or invalid."
-        )
-
+    if response.status_code == 401:
         st.session_state.logged_in = False
         st.session_state.auth_token = None
         st.session_state.username = None
-
-        st.info(
-            "Please log in again."
-        )
-
         st.rerun()
-
+        return
+    if response.status_code != 200:
+        st.error(f"Threat API returned HTTP {response.status_code}.")
         return
 
-    # =====================================================
-    # Other API Error
-    # =====================================================
-
-    if status_code != 200:
-
-        st.error(
-            f"Threat API returned HTTP {status_code}."
-        )
-
+    try:
+        data = response.json().get("data", [])
+    except ValueError:
+        st.error("Threat API returned invalid JSON.")
         return
 
-    # =====================================================
-    # Empty Data
-    # =====================================================
-
-    if not data:
-
-        st.info(
-            "No threat events are currently available."
-        )
-
+    df = _flatten_events(data)
+    if df.empty:
+        st.info("No threat events are currently available.")
         return
 
-    # =====================================================
-    # Convert to DataFrame
-    # =====================================================
+    df = add_threat_family(df)
 
-    df = pd.DataFrame(data)
+    labels = df.get("label", pd.Series(dtype=str)).astype(str).str.lower()
+    predictions = df.get("prediction", pd.Series(dtype=str)).astype(str).str.lower()
+    confidence = df.get("confidence_level", pd.Series(dtype=str)).astype(str).str.lower()
 
-    # =====================================================
-    # Report Summary
-    # =====================================================
-
-    st.subheader("📊 Report Summary")
-
-    total_events = len(df)
-
-    # -----------------------------------------------------
-    # Threat count
-    # -----------------------------------------------------
-
-    threat_count = 0
-
-    if "label" in df.columns:
-
-        labels = (
-            df["label"]
-            .astype(str)
-            .str.lower()
-            .str.strip()
-        )
-
-        threat_count = labels.isin(
-            [
-                "threat",
-                "attack",
-                "anomaly",
-                "malicious",
-                "intrusion",
-            ]
-        ).sum()
-
-    # -----------------------------------------------------
-    # Prediction count
-    # -----------------------------------------------------
-
-    prediction_count = 0
-
-    if "prediction" in df.columns:
-
-        prediction_values = (
-            df["prediction"]
-            .astype(str)
-            .str.lower()
-            .str.strip()
-        )
-
-        prediction_count = prediction_values.isin(
-            [
-                "1",
-                "true",
-                "threat",
-                "attack",
-                "anomaly",
-                "malicious",
-            ]
-        ).sum()
-
-    # -----------------------------------------------------
-    # Confidence
-    # -----------------------------------------------------
-
-    high_confidence = 0
-
-    if "confidence_level" in df.columns:
-
-        confidence_values = (
-            df["confidence_level"]
-            .astype(str)
-            .str.lower()
-            .str.strip()
-        )
-
-        high_confidence = (
-            confidence_values == "high"
-        ).sum()
-
-    # =====================================================
-    # Metrics
-    # =====================================================
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-
-        st.metric(
-            "📋 Total Events",
-            total_events,
-        )
-
-    with col2:
-
-        st.metric(
-            "🚨 Threat Events",
-            int(threat_count),
-        )
-
-    with col3:
-
-        st.metric(
-            "🎯 Predictions",
-            int(prediction_count),
-        )
-
-    with col4:
-
-        st.metric(
-            "🔴 High Confidence",
-            int(high_confidence),
-        )
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("TOTAL EVENTS", len(df))
+    c2.metric(
+        "THREAT EVENTS",
+        int(labels.isin(["threat", "attack", "malicious", "intrusion", "anomaly"]).sum()),
+    )
+    c3.metric("PREDICTIONS", len(predictions))
+    c4.metric("HIGH CONFIDENCE", int((confidence == "high").sum()))
 
     st.divider()
+    f1, f2, f3, f4 = st.columns(4)
+    with f1:
+        options = ["All"] + sorted(predictions.dropna().unique().tolist())
+        selected_prediction = st.selectbox("Prediction", options)
+    with f2:
+        options = ["All"] + sorted(confidence.dropna().unique().tolist())
+        selected_confidence = st.selectbox("Confidence", options)
+    with f3:
+        date_series = pd.to_datetime(df.get("detected_at"), errors="coerce")
+        min_date = date_series.min().date() if date_series.notna().any() else None
+        max_date = date_series.max().date() if date_series.notna().any() else None
+        selected_start = st.date_input("From", value=min_date) if min_date else None
+    with f4:
+        selected_end = st.date_input("To", value=max_date) if max_date else None
 
-    # =====================================================
-    # Report Filters
-    # =====================================================
+    filtered = df.copy()
+    if "detected_at" in filtered.columns:
+        detected = pd.to_datetime(filtered["detected_at"], errors="coerce")
+        if selected_start:
+            filtered = filtered[detected.dt.date >= selected_start]
+            detected = detected.loc[filtered.index]
+        if selected_end:
+            filtered = filtered[detected.dt.date <= selected_end]
 
-    st.subheader("🔎 Report Filters")
+    if selected_start and selected_end and selected_start > selected_end:
+        st.error("The report start date must be on or before the end date.")
+        return
+    if selected_prediction != "All" and "prediction" in filtered.columns:
+        filtered = filtered[
+            filtered["prediction"].astype(str).str.lower() == selected_prediction
+        ]
+    if selected_confidence != "All" and "confidence_level" in filtered.columns:
+        filtered = filtered[
+            filtered["confidence_level"].astype(str).str.lower() == selected_confidence
+        ]
 
-    filtered_df = df.copy()
+    st.write(f"Showing **{len(filtered)}** of **{len(df)}** events.")
 
-    filter_col1, filter_col2 = st.columns(2)
+    # Charts use the filtered report dataset, so they always match the table below.
+    # Charts use the filtered report dataset, so they always match the table below.
+    chart_a, chart_b = st.columns(2)
+    with chart_a:
+        prediction_chart(
+            filtered.get("prediction", pd.Series(dtype=str)).value_counts().to_dict(),
+            key="reports_predictions",
+        )
+    with chart_b:
+        confidence_chart(
+            filtered.get("confidence_level", pd.Series(dtype=str)).value_counts().to_dict(),
+            key="reports_confidence",
+        )
 
-    # -----------------------------------------------------
-    # Prediction Filter
-    # -----------------------------------------------------
+    chart_c, chart_d = st.columns(2)
+    with chart_c:
+        category_bar_chart(
+            filtered.get("threat_family", pd.Series(dtype=str)).fillna("Unknown").value_counts().to_dict(),
+            "Threat Family",
+            "Threat family distribution",
+            "reports_threat_families",
+        )
+    with chart_d:
+        severity_chart(
+            filtered.get("severity", pd.Series(dtype=str)).fillna("Unknown").value_counts().to_dict(),
+            key="reports_severity",
+        )
 
-    with filter_col1:
+    chart_e, chart_f = st.columns(2)
+    with chart_e:
+        action_chart(
+            filtered.get("action", pd.Series(dtype=str)).fillna("none").value_counts().to_dict(),
+            key="reports_actions",
+        )
+    with chart_f:
+        numeric_confidence_chart(
+            filtered.get("confidence", pd.Series(dtype=float)),
+            key="reports_numeric_confidence",
+        )
 
-        if "prediction" in df.columns:
-
-            predictions = sorted(
-                df["prediction"]
-                .dropna()
-                .astype(str)
-                .unique()
-                .tolist()
-            )
-
-            selected_prediction = st.selectbox(
-                "Prediction",
-                ["All"] + predictions,
-            )
-
-            if selected_prediction != "All":
-
-                filtered_df = filtered_df[
-                    filtered_df["prediction"]
-                    .astype(str)
-                    == selected_prediction
-                ]
-
-    # -----------------------------------------------------
-    # Confidence Filter
-    # -----------------------------------------------------
-
-    with filter_col2:
-
-        if "confidence_level" in df.columns:
-
-            confidence_levels = sorted(
-                df["confidence_level"]
-                .dropna()
-                .astype(str)
-                .unique()
-                .tolist()
-            )
-
-            selected_confidence = st.selectbox(
-                "Confidence Level",
-                ["All"] + confidence_levels,
-            )
-
-            if selected_confidence != "All":
-
-                filtered_df = filtered_df[
-                    filtered_df["confidence_level"]
-                    .astype(str)
-                    == selected_confidence
-                ]
-
-    st.write(
-        f"Showing **{len(filtered_df)}** "
-        f"of **{len(df)}** events."
+    multi_timeline_chart(
+        filtered,
+        "detected_at",
+        "severity",
+        "Threat activity over time by severity",
+        "reports_timeline",
     )
 
-    # =====================================================
-    # Threat Event Report
-    # =====================================================
-
-    st.subheader("📋 Threat Event Report")
-
-    if filtered_df.empty:
-
-        st.warning(
-            "No events match the selected filters."
+    chart_g, chart_h = st.columns(2)
+    with chart_g:
+        top_values_chart(
+            filtered.get("source_ip", pd.Series(dtype=str)),
+            "Top source IPs",
+            "Source IP",
+            "reports_source_ips",
+        )
+    with chart_h:
+        top_values_chart(
+            filtered.get("destination_ip", pd.Series(dtype=str)),
+            "Top destination IPs",
+            "Destination IP",
+            "reports_destination_ips",
         )
 
-    else:
-
-        st.dataframe(
-            filtered_df,
-            use_container_width=True,
-            hide_index=True,
-        )
-
-    # =====================================================
-    # Report Statistics
-    # =====================================================
-
     st.divider()
-
-    st.subheader("📊 Report Statistics")
-
-    chart_col1, chart_col2 = st.columns(2)
-
-    # -----------------------------------------------------
-    # Prediction Distribution
-    # -----------------------------------------------------
-
-    with chart_col1:
-
-        if "prediction" in df.columns:
-
-            st.caption(
-                "Prediction Distribution"
-            )
-
-            prediction_counts = (
-                df["prediction"]
-                .astype(str)
-                .value_counts()
-            )
-
-            st.bar_chart(
-                prediction_counts,
-                use_container_width=True,
-            )
-
-    # -----------------------------------------------------
-    # Confidence Distribution
-    # -----------------------------------------------------
-
-    with chart_col2:
-
-        if "confidence_level" in df.columns:
-
-            st.caption(
-                "Confidence Distribution"
-            )
-
-            confidence_counts = (
-                df["confidence_level"]
-                .astype(str)
-                .value_counts()
-            )
-
-            st.bar_chart(
-                confidence_counts,
-                use_container_width=True,
-            )
-
-    # =====================================================
-    # CSV Report
-    # =====================================================
-
-    st.divider()
-
-    st.subheader("📥 Export Report")
-
-    csv_data = filtered_df.to_csv(
-        index=False
+    st.subheader("Report Details")
+    st.dataframe(
+        filtered,
+        use_container_width=True,
+        hide_index=True,
+        height=500,
     )
 
+    csv = filtered.to_csv(index=False).encode("utf-8")
     st.download_button(
-        label="⬇️ Download CSV Report",
-        data=csv_data,
-        file_name="ntcf_threat_report.csv",
+        "⬇  Download CSV Report",
+        data=csv,
+        file_name="ntcf_security_report.csv",
         mime="text/csv",
         use_container_width=True,
     )

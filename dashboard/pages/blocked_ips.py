@@ -1,327 +1,177 @@
-"""
-NTCF Dashboard - Blocked IP Addresses
-
-Issue #29
-"""
+"""Firewall / blocked IP management page."""
 
 import pandas as pd
 import requests
 import streamlit as st
 
+from components.charts import category_bar_chart, timeline_chart, top_values_chart
+
 
 FIREWALL_API = "http://127.0.0.1:5000/api/firewall"
 
 
-def get_blocked_ips():
-
+def _request(method, endpoint, **kwargs):
     try:
-
-        response = requests.get(
-            f"{FIREWALL_API}/blocked",
+        response = requests.request(
+            method,
+            f"{FIREWALL_API}{endpoint}",
             timeout=5,
+            **kwargs,
         )
-
-        return response.status_code, response.json()
-
-    except requests.RequestException as error:
-
-        return None, {
-            "success": False,
-            "message": str(error),
-        }
-
-    except ValueError:
-
-        return None, {
-            "success": False,
-            "message": "Invalid response from Firewall API.",
-        }
+        try:
+            return response.status_code, response.json()
+        except ValueError:
+            return response.status_code, {"message": response.text}
+    except requests.RequestException as exc:
+        return None, {"message": str(exc)}
 
 
-def block_ip(ip_address, reason):
-
-    payload = {
-        "ip_address": ip_address,
-        "reason": reason,
-        "dry_run": True,
-    }
-
-    try:
-
-        response = requests.post(
-            f"{FIREWALL_API}/block",
-            json=payload,
-            timeout=5,
+def _blocked_dataframe(blocked):
+    rows = []
+    for ip, info in blocked.items():
+        info = info if isinstance(info, dict) else {}
+        rows.append(
+            {
+                "IP Address": ip,
+                "Reason": info.get("reason", "Not specified"),
+                "Blocked At": info.get("blocked_at", "Unknown"),
+            }
         )
-
-        return response.status_code, response.json()
-
-    except requests.RequestException as error:
-
-        return None, {
-            "success": False,
-            "message": str(error),
-        }
-
-    except ValueError:
-
-        return None, {
-            "success": False,
-            "message": "Invalid response from Firewall API.",
-        }
-
-
-def unblock_ip(ip_address):
-
-    payload = {
-        "ip_address": ip_address,
-        "dry_run": True,
-    }
-
-    try:
-
-        response = requests.post(
-            f"{FIREWALL_API}/unblock",
-            json=payload,
-            timeout=5,
-        )
-
-        return response.status_code, response.json()
-
-    except requests.RequestException as error:
-
-        return None, {
-            "success": False,
-            "message": str(error),
-        }
-
-    except ValueError:
-
-        return None, {
-            "success": False,
-            "message": "Invalid response from Firewall API.",
-        }
+    return pd.DataFrame(rows)
 
 
 def show_blocked_ips():
+    st.caption("RESPONSE CONTROL")
+    st.header("Blocked IP Addresses")
+    st.caption("Review and manage addresses handled by the NTCF firewall service.")
 
-    st.title("🛡️ Blocked IP Addresses")
-
-    st.caption(
-        "View IP addresses managed by the NTCF firewall."
-    )
-
-    st.divider()
-
-    status_code, data = get_blocked_ips()
-
-    if status_code is None:
-
-        st.error(
-            "🔴 Unable to connect to the Firewall API."
-        )
-
-        st.info(
-            "Make sure the Flask backend is running "
-            "on http://127.0.0.1:5000."
-        )
-
+    status, data = _request("GET", "/blocked")
+    if status is None:
+        st.error(f"Firewall API unavailable: {data.get('message')}")
+        return
+    if status != 200:
+        st.error(f"Firewall API returned HTTP {status}.")
         return
 
-    if status_code != 200:
+    blocked = data.get("blocked_ips", {})
+    df = _blocked_dataframe(blocked)
 
-        st.error(
-            f"Firewall API returned HTTP {status_code}."
-        )
+    st.metric("BLOCKED ADDRESSES", len(blocked))
 
-        return
+    if not df.empty:
+        st.divider()
 
-    blocked = data.get(
-        "blocked_ips",
-        {},
-    )
-
-    # =====================================================
-    # Statistics
-    # =====================================================
-
-    st.metric(
-        "🚫 Blocked IP Addresses",
-        len(blocked),
-    )
-
-    st.divider()
-
-    # =====================================================
-    # Blocked IP Table
-    # =====================================================
-
-    st.subheader("📋 Current Block List")
-
-    if not blocked:
-
-        st.info(
-            "No IP addresses are currently blocked."
-        )
-
-    else:
-
-        rows = []
-
-        for ip_address, info in blocked.items():
-
-            if not isinstance(info, dict):
-                info = {}
-
-            rows.append(
-                {
-                    "IP Address": ip_address,
-                    "Reason": info.get(
-                        "reason",
-                        "Not specified",
-                    ),
-                    "Blocked At": info.get(
-                        "blocked_at",
-                        "Unknown",
-                    ),
-                }
+        c1, c2 = st.columns(2)
+        with c1:
+            reason_counts = (
+                df["Reason"]
+                .fillna("Not specified")
+                .value_counts()
+                .to_dict()
+            )
+            category_bar_chart(
+                reason_counts,
+                "Reason",
+                "Blocks by reason",
+                "blocked_ip_reasons",
+            )
+        with c2:
+            timeline_chart(
+                df,
+                "Blocked At",
+                "Blocked addresses over time",
+                "blocked_ip_timeline",
             )
 
-        df = pd.DataFrame(rows)
+        c3, c4 = st.columns(2)
+        with c3:
+            top_values_chart(
+                df["IP Address"],
+                "Most frequently blocked IPs",
+                "IP Address",
+                "blocked_ip_top_ips",
+            )
+        with c4:
+            st.info(
+                "Firewall success/failure is not charted because the current "
+                "firewall API response does not expose per-event execution status."
+            )
 
+        st.subheader("Blocked Address Details")
         st.dataframe(
             df,
             use_container_width=True,
             hide_index=True,
         )
-
-    # =====================================================
-    # Firewall Actions
-    # =====================================================
+    else:
+        st.info("No IP addresses are currently blocked.")
 
     st.divider()
+    block_col, unblock_col = st.columns(2)
 
-    st.subheader("⚙️ Firewall Actions")
-
-    block_column, unblock_column = st.columns(2)
-
-    # =====================================================
-    # Block
-    # =====================================================
-
-    with block_column:
-
-        st.markdown("### 🚫 Block IP")
-
-        ip_address = st.text_input(
-            "IP Address",
-            placeholder="192.168.1.100",
-            key="block_ip_address",
-        )
-
-        reason = st.text_input(
-            "Reason",
-            placeholder="Suspicious activity",
-            key="block_reason",
-        )
-
-        if st.button(
-            "🚫 Block Address",
-            use_container_width=True,
-        ):
-
-            if not ip_address.strip():
-
-                st.warning(
-                    "Enter an IP address."
-                )
-
-            else:
-
-                status, result = block_ip(
-                    ip_address.strip(),
-                    reason.strip(),
-                )
-
-                if status is None:
-
-                    st.error(
-                        result.get(
-                            "message",
-                            "Firewall API unavailable.",
-                        )
-                    )
-
-                elif status >= 400:
-
-                    st.error(
-                        result.get(
-                            "message",
-                            "Unable to block IP.",
-                        )
-                    )
-
+    with block_col:
+        with st.container(border=True):
+            st.subheader("Block Address")
+            ip = st.text_input(
+                "IP address",
+                placeholder="192.168.1.100",
+                key="block_ip",
+            )
+            reason = st.text_input(
+                "Reason",
+                placeholder="Suspicious activity",
+                key="block_reason",
+            )
+            if st.button(
+                "🚫 Block IP",
+                type="primary",
+                use_container_width=True,
+            ):
+                if not ip.strip():
+                    st.warning("Enter an IP address.")
                 else:
-
-                    st.success(
-                        "Block request processed."
+                    code, result = _request(
+                        "POST",
+                        "/block",
+                        json={
+                            "ip_address": ip.strip(),
+                            "reason": reason.strip(),
+                            "dry_run": True,
+                        },
                     )
-
-                    st.json(result)
-
-    # =====================================================
-    # Unblock
-    # =====================================================
-
-    with unblock_column:
-
-        st.markdown("### ✅ Unblock IP")
-
-        unblock_address = st.text_input(
-            "IP Address",
-            placeholder="192.168.1.100",
-            key="unblock_ip_address",
-        )
-
-        if st.button(
-            "✅ Unblock Address",
-            use_container_width=True,
-        ):
-
-            if not unblock_address.strip():
-
-                st.warning(
-                    "Enter an IP address."
-                )
-
-            else:
-
-                status, result = unblock_ip(
-                    unblock_address.strip()
-                )
-
-                if status is None:
-
-                    st.error(
-                        result.get(
-                            "message",
-                            "Firewall API unavailable.",
+                    if code and code < 400:
+                        st.success("Block request processed.")
+                        st.rerun()
+                    else:
+                        st.error(
+                            result.get("message")
+                            or result.get("error")
+                            or "Unable to block IP."
                         )
-                    )
 
-                elif status >= 400:
-
-                    st.error(
-                        result.get(
-                            "message",
-                            "Unable to unblock IP.",
-                        )
-                    )
-
+    with unblock_col:
+        with st.container(border=True):
+            st.subheader("Unblock Address")
+            ip = st.text_input(
+                "IP address",
+                placeholder="192.168.1.100",
+                key="unblock_ip",
+            )
+            if st.button("✓ Unblock IP", use_container_width=True):
+                if not ip.strip():
+                    st.warning("Enter an IP address.")
                 else:
-
-                    st.success(
-                        "Unblock request processed."
+                    code, result = _request(
+                        "POST",
+                        "/unblock",
+                        json={"ip_address": ip.strip(), "dry_run": True},
                     )
-
-                    st.json(result)
+                    if code and code < 400:
+                        st.success("Unblock request processed.")
+                        st.rerun()
+                    else:
+                        st.error(
+                            result.get("message")
+                            or result.get("error")
+                            or "Unable to unblock IP."
+                        )

@@ -1,490 +1,383 @@
 """
-NTCF Dashboard - Live Monitoring
+Live SOC monitoring.
 
-Issue #29
-
-Provides a dashboard interface for sending network
-feature data to the NTCF Detection API.
-
-The dashboard uses the complete NSL-KDD feature set
-defined in ml.config.columns.
+The dashboard reuses the project's existing packet capture and pipeline.
+It runs bounded capture batches in a background thread and displays the
+results without changing the backend or packet-capture implementation.
 """
 
-import json
+from collections import deque
+from dataclasses import dataclass, field
+from pathlib import Path
+import sys
+import threading
+import time
 
+import pandas as pd
 import requests
 import streamlit as st
 
-from ml.config.columns import (
-    FEATURE_COLUMNS,
-    CATEGORICAL_COLUMNS,
+# Make the project root importable when this page is imported directly
+# or when Streamlit changes the working directory.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from database.connection import SessionLocal, init_db
+from components.charts import (
+    action_chart,
+    confidence_chart,
+    live_metrics_chart,
+    prediction_chart,
+    severity_chart,
+    top_values_chart,
 )
+from detection.threat_detector import ThreatDetector
+from ntcf_pipeline import process_packet_batch
+from packet_capture.live_capture import capture_packets
+
+BACKEND = "http://127.0.0.1:5000"
 
 
-# =========================================================
-# Detection API
-# =========================================================
-
-DETECTION_API = "http://127.0.0.1:5000/api/detection"
-
-
-# =========================================================
-# Default NSL-KDD Features
-# =========================================================
-
-def build_default_features():
-    """
-    Build a complete default NSL-KDD feature dictionary.
-
-    Categorical features receive realistic default values.
-    Numerical features receive zero.
-    """
-
-    features = {}
-
-    for column in FEATURE_COLUMNS:
-
-        if column in CATEGORICAL_COLUMNS:
-
-            if column == "protocol_type":
-                features[column] = "tcp"
-
-            elif column == "service":
-                features[column] = "http"
-
-            elif column == "flag":
-                features[column] = "SF"
-
-            else:
-                features[column] = ""
-
-        else:
-            features[column] = 0
-
-    return features
+@dataclass
+class LiveState:
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    stop_event: threading.Event = field(default_factory=threading.Event)
+    thread: threading.Thread | None = None
+    rows: deque = field(default_factory=lambda: deque(maxlen=100))
+    history: deque = field(default_factory=lambda: deque(maxlen=60))
+    packets: int = 0
+    flows: int = 0
+    threats: int = 0
+    batches: int = 0
+    started: float | None = None
+    error: str | None = None
 
 
-# =========================================================
-# API Request
-# =========================================================
+def _get_state():
+    if "live_state" not in st.session_state:
+        st.session_state.live_state = LiveState()
+    return st.session_state.live_state
 
-def send_detection(model_name, features):
-    """
-    Send feature data to the NTCF Detection API.
-    """
 
-    payload = {
-        "model_name": model_name,
-        "features": features,
-    }
+def _running(state):
+    return bool(state.thread and state.thread.is_alive())
 
+
+def _worker(state, batch_size, interface, model_name):
     try:
-
-        response = requests.post(
-            f"{DETECTION_API}/predict",
-            json=payload,
-            timeout=10,
-        )
+        init_db()
+        db = SessionLocal()
+        detector = ThreatDetector(model_name=model_name)
 
         try:
-            data = response.json()
+            while not state.stop_event.is_set():
+                packets = capture_packets(
+                    packet_count=batch_size,
+                    interface=interface or None,
+                )
 
-        except ValueError:
+                if state.stop_event.is_set():
+                    break
 
-            data = {
-                "success": False,
-                "message": response.text,
-            }
+                if not packets:
+                    continue
 
-        return response.status_code, data
+                results = process_packet_batch(packets, detector, db)
 
-    except requests.RequestException as error:
+                rows = [
+                    {
+                        "Source": result.get("source_ip", "—"),
+                        "Destination": result.get("destination_ip", "—"),
+                        "Prediction": result.get("prediction", "—"),
+                        "Confidence": result.get("confidence_score", "—"),
+                        "Level": result.get("confidence_level", "—"),
+                        "Severity": result.get("severity", "—"),
+                        "Action": result.get("action", "—"),
+                    }
+                    for result in results
+                ]
 
-        return None, {
-            "success": False,
-            "message": str(error),
+                threat_count = sum(
+                    str(result.get("prediction", "")).lower() != "normal"
+                    for result in results
+                )
+
+                with state.lock:
+                    state.packets += len(packets)
+                    state.flows += len(results)
+                    state.threats += threat_count
+                    state.batches += 1
+                    state.history.append(
+                        {
+                            "batch": state.batches,
+                            "packets": state.packets,
+                            "flows": state.flows,
+                            "threats": state.threats,
+                        }
+                    )
+                    for row in reversed(rows):
+                        state.rows.appendleft(row)
+
+        finally:
+            db.close()
+
+    except Exception as exc:
+        with state.lock:
+            state.error = f"{type(exc).__name__}: {exc}"
+
+    finally:
+        with state.lock:
+            state.thread = None
+
+
+def _start(state, batch_size, interface, model_name):
+    if _running(state):
+        return
+
+    state.stop_event = threading.Event()
+    with state.lock:
+        state.rows.clear()
+        state.history.clear()
+        state.packets = 0
+        state.flows = 0
+        state.threats = 0
+        state.batches = 0
+        state.started = time.time()
+        state.error = None
+
+    state.thread = threading.Thread(
+        target=_worker,
+        args=(state, batch_size, interface.strip(), model_name),
+        name="ntcf-dashboard-live-capture",
+        daemon=True,
+    )
+    state.thread.start()
+
+
+def _stop(state):
+    state.stop_event.set()
+
+
+def _backend_health():
+    try:
+        response = requests.get(f"{BACKEND}/api/dashboard/health", timeout=2)
+        return response.status_code == 200
+    except requests.RequestException:
+        return False
+
+
+def _snapshot(state):
+    with state.lock:
+        return {
+            "packets": state.packets,
+            "flows": state.flows,
+            "threats": state.threats,
+            "batches": state.batches,
+            "started": state.started,
+            "error": state.error,
+            "rows": list(state.rows),
+            "history": list(state.history),
         }
 
 
-# =========================================================
-# Live Monitoring Page
-# =========================================================
-
 def show_live_monitoring():
+    state = _get_state()
+    running = _running(state)
 
-    st.title("📡 Live Threat Monitoring")
-
+    st.caption("LIVE OPERATIONS")
+    st.header("Live Threat Monitoring")
     st.caption(
-        "Submit NSL-KDD network feature data to the "
-        "NTCF detection engine and view the prediction."
+        "Continuous packet capture → flow processing → ML detection → decision engine."
     )
 
-    st.divider()
+    with st.container(border=True):
+        st.subheader("Capture Controls")
+        c1, c2, c3 = st.columns([1, 1, 2])
 
-    # =====================================================
-    # API Status
-    # =====================================================
-
-    st.subheader("🔌 Detection API Status")
-
-    try:
-
-        health_response = requests.get(
-            f"{DETECTION_API}/health",
-            timeout=3,
-        )
-
-        if health_response.status_code == 200:
-
-            st.success(
-                "🟢 Detection API Online"
+        with c1:
+            batch_size = st.selectbox(
+                "Batch size",
+                [5, 10, 20, 50, 100],
+                index=2,
+                disabled=running,
+                key="live_batch_size",
             )
 
-        else:
-
-            st.warning(
-                "🟡 Detection API responded with an error."
+        with c2:
+            model_name = st.selectbox(
+                "Detection model",
+                ["decision_tree", "random_forest", "svm"],
+                disabled=running,
+                key="live_model",
             )
 
-    except requests.RequestException:
-
-        st.error(
-            "🔴 Detection API Offline"
-        )
-
-        st.info(
-            "Start the Flask backend before sending "
-            "a detection request."
-        )
-
-    st.divider()
-
-    # =====================================================
-    # Model Selection
-    # =====================================================
-
-    st.subheader("🤖 Detection Model")
-
-    model_name = st.selectbox(
-        "Select ML Model",
-        [
-            "decision_tree",
-            "random_forest",
-            "svm",
-        ],
-        index=0,
-    )
-
-    st.caption(
-        "Decision Tree is the default NTCF detection model."
-    )
-
-    st.divider()
-
-    # =====================================================
-    # Feature Input
-    # =====================================================
-
-    st.subheader("📥 Network Feature Input")
-
-    st.write(
-        "Enter the complete NSL-KDD feature set as JSON."
-    )
-
-    default_features = build_default_features()
-
-    feature_text = st.text_area(
-        "Features (JSON)",
-        value=json.dumps(
-            default_features,
-            indent=4,
-        ),
-        height=450,
-        help=(
-            "Use the feature names defined in "
-            "ml.config.columns."
-        ),
-    )
-
-    st.caption(
-        f"Expected features: {len(FEATURE_COLUMNS)}"
-    )
-
-    # =====================================================
-    # Detection Button
-    # =====================================================
-
-    if st.button(
-        "🔍 Analyze Network Traffic",
-        use_container_width=True,
-        type="primary",
-    ):
-
-        # -------------------------------------------------
-        # Parse JSON
-        # -------------------------------------------------
-
-        try:
-
-            features = json.loads(
-                feature_text
+        with c3:
+            interface = st.text_input(
+                "Network interface (optional)",
+                placeholder="Blank = Scapy default interface",
+                disabled=running,
+                key="live_interface",
             )
 
-        except json.JSONDecodeError as error:
-
-            st.error(
-                f"Invalid JSON: {error}"
-            )
-
-            return
-
-        # -------------------------------------------------
-        # Validate JSON object
-        # -------------------------------------------------
-
-        if not isinstance(features, dict):
-
-            st.error(
-                "Features must be a JSON object."
-            )
-
-            return
-
-        if not features:
-
-            st.error(
-                "Feature data cannot be empty."
-            )
-
-            return
-
-        # -------------------------------------------------
-        # Validate feature names
-        # -------------------------------------------------
-
-        missing_features = [
-            column
-            for column in FEATURE_COLUMNS
-            if column not in features
-        ]
-
-        if missing_features:
-
-            st.error(
-                "Missing required features:"
-            )
-
-            st.code(
-                json.dumps(
-                    missing_features,
-                    indent=4,
-                )
-            )
-
-            return
-
-        # -------------------------------------------------
-        # Detect unexpected features
-        # -------------------------------------------------
-
-        unexpected_features = [
-            column
-            for column in features
-            if column not in FEATURE_COLUMNS
-        ]
-
-        if unexpected_features:
-
-            st.warning(
-                "The following unexpected features "
-                "will be sent to the API:"
-            )
-
-            st.code(
-                json.dumps(
-                    unexpected_features,
-                    indent=4,
-                )
-            )
-
-        # -------------------------------------------------
-        # Send Detection Request
-        # -------------------------------------------------
-
-        with st.spinner(
-            "Analyzing network traffic..."
-        ):
-
-            status_code, result = send_detection(
-                model_name,
-                features,
-            )
-
-        # -------------------------------------------------
-        # Connection Error
-        # -------------------------------------------------
-
-        if status_code is None:
-
-            st.error(
-                "🔴 Unable to connect to the Detection API."
-            )
-
-            st.info(
-                "Make sure the backend is running on "
-                "http://127.0.0.1:5000"
-            )
-
-            return
-
-        # -------------------------------------------------
-        # API Error
-        # -------------------------------------------------
-
-        if status_code >= 400:
-
-            message = result.get(
-                "message",
-                result.get(
-                    "error",
-                    "Detection request failed.",
-                ),
-            )
-
-            st.error(
-                f"Detection API error "
-                f"(HTTP {status_code}): {message}"
-            )
-
-            return
-
-        # -------------------------------------------------
-        # Successful Prediction
-        # -------------------------------------------------
-
-        st.success(
-            "✅ Detection completed successfully."
-        )
-
-        st.divider()
-
-        st.subheader(
-            "🎯 Detection Result"
-        )
-
-        # -------------------------------------------------
-        # Result Metrics
-        # -------------------------------------------------
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-
-            st.metric(
-                "Prediction",
-                str(
-                    result.get(
-                        "prediction",
-                        "Unknown",
-                    )
-                ),
-            )
-
-        with col2:
-
-            st.metric(
-                "Classification",
-                str(
-                    result.get(
-                        "label",
-                        "Unknown",
-                    )
-                ),
-            )
-
-        with col3:
-
-            confidence = result.get(
-                "confidence",
-                0,
-            )
-
-            try:
-
-                confidence_value = float(
-                    confidence
-                )
-
-            except (
-                TypeError,
-                ValueError,
+        b1, b2, b3 = st.columns(3)
+        with b1:
+            if st.button(
+                "▶  START CONTINUOUS CAPTURE",
+                type="primary",
+                use_container_width=True,
+                disabled=running,
             ):
+                _start(state, batch_size, interface, model_name)
+                st.rerun()
 
-                confidence_value = 0.0
+        with b2:
+            if st.button(
+                "■  STOP CAPTURE",
+                use_container_width=True,
+                disabled=not running,
+            ):
+                _stop(state)
+                st.rerun()
 
-            # Support both 0.85 and 85 formats.
-            if confidence_value > 1:
-                confidence_value /= 100
+        with b3:
+            if _backend_health():
+                st.success("Backend API • Online")
+            else:
+                st.error("Backend API • Offline")
 
-            st.metric(
-                "Confidence",
-                f"{confidence_value:.2%}",
+    snap = _snapshot(state)
+
+    if snap["error"]:
+        st.error(f"Live pipeline error: {snap['error']}")
+
+    # The whole live section refreshes independently while capture is running.
+    if running and hasattr(st, "fragment"):
+        @st.fragment(run_every="2s")
+        def live_view():
+            current = _snapshot(state)
+            st.divider()
+
+            a, b, c, d = st.columns(4)
+            a.metric("CAPTURE STATUS", "RUNNING")
+            b.metric("PACKETS CAPTURED", current["packets"])
+            c.metric("PROCESSED FLOWS", current["flows"])
+            d.metric("THREATS DETECTED", current["threats"])
+
+            st.subheader("Live Processing Activity")
+            live_metrics_chart(current["history"], key="live_batch_metrics")
+
+            live_df = pd.DataFrame(current["rows"])
+            if not live_df.empty:
+                st.subheader("Live Detection Analytics")
+                chart_a, chart_b = st.columns(2)
+                with chart_a:
+                    prediction_chart(
+                        live_df["Prediction"].astype(str).value_counts().to_dict(),
+                        key="live_predictions",
+                    )
+                with chart_b:
+                    confidence_chart(
+                        live_df["Level"].astype(str).value_counts().to_dict(),
+                        key="live_confidence",
+                    )
+
+                chart_c, chart_d = st.columns(2)
+                with chart_c:
+                    severity_chart(
+                        live_df["Severity"].astype(str).value_counts().to_dict(),
+                        key="live_severity",
+                    )
+                with chart_d:
+                    action_chart(
+                        live_df["Action"].astype(str).value_counts().to_dict(),
+                        key="live_actions",
+                    )
+
+                chart_e, chart_f = st.columns(2)
+                with chart_e:
+                    top_values_chart(
+                        live_df["Source"],
+                        "Top active source IPs",
+                        "Source IP",
+                        "live_source_ips",
+                    )
+                with chart_f:
+                    top_values_chart(
+                        live_df["Destination"],
+                        "Top active destination IPs",
+                        "Destination IP",
+                        "live_destination_ips",
+                    )
+
+                st.subheader("Live Detection Stream")
+                st.dataframe(
+                    live_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    height=430,
+                )
+            else:
+                st.info("Capture is running. Waiting for the first processed batch...")
+
+            st.caption(
+                f"Batch cycles completed: {current['batches']} • "
+                "Live refresh: every 2 seconds"
             )
 
-        # -------------------------------------------------
-        # Additional Result Information
-        # -------------------------------------------------
-
+        live_view()
+    else:
         st.divider()
+        a, b, c, d = st.columns(4)
+        a.metric("CAPTURE STATUS", "RUNNING" if running else "STOPPED")
+        b.metric("PACKETS CAPTURED", snap["packets"])
+        c.metric("PROCESSED FLOWS", snap["flows"])
+        d.metric("THREATS DETECTED", snap["threats"])
 
-        st.subheader(
-            "📊 Detection Details"
-        )
+        st.subheader("Live Processing Activity")
+        live_metrics_chart(snap["history"], key="live_batch_metrics_static")
 
-        result_col1, result_col2 = st.columns(2)
+        live_df = pd.DataFrame(snap["rows"])
+        if not live_df.empty:
+            st.subheader("Live Detection Analytics")
+            chart_a, chart_b = st.columns(2)
+            with chart_a:
+                prediction_chart(
+                    live_df["Prediction"].astype(str).value_counts().to_dict(),
+                    key="live_predictions_static",
+                )
+            with chart_b:
+                confidence_chart(
+                    live_df["Level"].astype(str).value_counts().to_dict(),
+                    key="live_confidence_static",
+                )
+            chart_c, chart_d = st.columns(2)
+            with chart_c:
+                severity_chart(
+                    live_df["Severity"].astype(str).value_counts().to_dict(),
+                    key="live_severity_static",
+                )
+            with chart_d:
+                action_chart(
+                    live_df["Action"].astype(str).value_counts().to_dict(),
+                    key="live_actions_static",
+                )
 
-        with result_col1:
-
-            st.write(
-                "**Model:**",
-                result.get(
-                    "model_name",
-                    model_name,
-                ),
+            st.subheader("Live Detection Stream")
+            st.dataframe(
+                live_df,
+                use_container_width=True,
+                hide_index=True,
+                height=430,
+            )
+        else:
+            st.info(
+                "No processed flows yet. Start continuous capture to populate the stream."
             )
 
-            st.write(
-                "**Prediction:**",
-                result.get(
-                    "prediction",
-                    "Unknown",
-                ),
-            )
-
-        with result_col2:
-
-            st.write(
-                "**Label:**",
-                result.get(
-                    "label",
-                    "Unknown",
-                ),
-            )
-
-            st.write(
-                "**Confidence Level:**",
-                result.get(
-                    "confidence_level",
-                    "Unknown",
-                ),
-            )
-
-        # -------------------------------------------------
-        # Raw API Response
-        # -------------------------------------------------
-
-        with st.expander(
-            "🔎 View API Response"
-        ):
-
-            st.json(result)
+    st.divider()
+    st.caption(
+        "This page reuses the project's existing packet_capture.live_capture "
+        "and ntcf_pipeline.process_packet_batch implementations. "
+        "Capture is bounded by batch size so the dashboard remains responsive."
+    )

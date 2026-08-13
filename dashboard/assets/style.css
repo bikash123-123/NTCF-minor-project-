@@ -1,201 +1,206 @@
-/* =========================================================
-   NTCF SECURITY OPERATIONS CENTER
-   Global Dashboard Styling
-   ========================================================= */
-
-
-/* ---------------------------------------------------------
-   Main Application
-   --------------------------------------------------------- */
+:root {
+    --soc-bg: #071019;
+    --soc-panel: #0b1722;
+    --soc-panel-2: #0f1d2a;
+    --soc-border: #203244;
+    --soc-text: #edf5fb;
+    --soc-muted: #8ea2b4;
+    --soc-blue: #21a5ff;
+    --soc-blue-2: #0d75bf;
+    --soc-green: #26d07c;
+    --soc-yellow: #f4b740;
+    --soc-red: #ff5b61;
+}
 
 .stApp {
-    background-color: #080d14;
+    background:
+        radial-gradient(circle at 82% 0%, rgba(20, 119, 190, .12), transparent 28rem),
+        var(--soc-bg);
+    color: var(--soc-text);
 }
 
-
-/* ---------------------------------------------------------
-   Main Container
-   --------------------------------------------------------- */
+[data-testid="stHeader"] {
+    background: rgba(7, 16, 25, .94);
+}
 
 .block-container {
-    max-width: 1400px;
-    padding-top: 2rem;
-    padding-bottom: 3rem;
+    max-width: 1500px;
+    padding: 1.4rem 2.2rem 3rem;
 }
 
-
-/* ---------------------------------------------------------
-   General Text
-   --------------------------------------------------------- */
+h1, h2, h3, h4 {
+    color: var(--soc-text) !important;
+    letter-spacing: -.025em;
+}
 
 h1 {
-    color: #f5f7fa;
+    font-size: 1.55rem !important;
+    margin-bottom: .15rem !important;
 }
 
 h2 {
-    color: #e8eef5;
+    font-size: 1.35rem !important;
 }
 
 h3 {
-    color: #dce5ee;
+    font-size: 1.05rem !important;
 }
 
-p {
-    color: #9ba9b8;
+p, .stCaption, label {
+    color: var(--soc-muted);
 }
 
-
-/* ---------------------------------------------------------
-   Sidebar
-   --------------------------------------------------------- */
-
+/* Sidebar */
 section[data-testid="stSidebar"] {
-    background-color: #0b121b;
-    border-right: 1px solid #223346;
+    background: linear-gradient(180deg, #08131d 0%, #09141e 100%);
+    border-right: 1px solid var(--soc-border);
 }
 
-section[data-testid="stSidebar"] h1,
-section[data-testid="stSidebar"] h2,
-section[data-testid="stSidebar"] h3 {
-    color: #f5f7fa;
+section[data-testid="stSidebar"] > div {
+    padding: 1.15rem .9rem;
 }
 
-
-/* ---------------------------------------------------------
-   Sidebar Navigation
-   --------------------------------------------------------- */
-
-section[data-testid="stSidebar"] .stRadio label {
-    color: #b7c4d1;
+section[data-testid="stSidebar"] h2 {
+    color: #fff !important;
+    margin-bottom: 0 !important;
 }
 
-section[data-testid="stSidebar"] .stRadio label:hover {
-    color: #ffffff;
+section[data-testid="stSidebar"] hr {
+    border-color: var(--soc-border);
 }
 
-
-/* ---------------------------------------------------------
-   Text Inputs
-   --------------------------------------------------------- */
-
-div[data-baseweb="input"] {
-    background-color: #111a25;
+section[data-testid="stSidebar"] [data-testid="stRadio"] label {
     border-radius: 8px;
-    border: 1px solid #2a4055;
+    padding: .56rem .7rem;
+    color: #b6c6d3;
+    transition: background .15s ease, color .15s ease;
 }
 
-div[data-baseweb="input"]:focus-within {
-    border-color: #3b9cff;
+section[data-testid="stSidebar"] [data-testid="stRadio"] label:hover {
+    background: #122232;
+    color: #fff;
 }
 
+section[data-testid="stSidebar"] [data-testid="stRadio"] label[data-checked="true"] {
+    background: #0d3652;
+    color: #fff;
+}
 
-/* ---------------------------------------------------------
-   Buttons
-   --------------------------------------------------------- */
+/* Cards / metrics */
+div[data-testid="stMetric"] {
+    background: linear-gradient(145deg, var(--soc-panel-2), var(--soc-panel));
+    border: 1px solid var(--soc-border);
+    border-radius: 11px;
+    padding: .9rem 1rem;
+    min-height: 112px;
+    box-shadow: 0 8px 25px rgba(0,0,0,.17);
+}
 
-.stButton > button {
-    min-height: 44px;
+div[data-testid="stMetric"] label {
+    color: var(--soc-muted) !important;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    font-size: .72rem;
+    font-weight: 700;
+}
 
+div[data-testid="stMetric"] [data-testid="stMetricValue"] {
+    color: var(--soc-text) !important;
+    font-weight: 750;
+    font-size: 1.75rem;
+}
+
+/* Native containers */
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    background: rgba(12, 25, 36, .82);
+    border-color: var(--soc-border) !important;
+    border-radius: 11px;
+}
+
+/* Inputs */
+div[data-baseweb="input"] > div,
+div[data-baseweb="select"] > div,
+textarea {
+    background: #0b1823 !important;
+    border-color: var(--soc-border) !important;
+    color: var(--soc-text) !important;
+}
+
+div[data-baseweb="input"] > div:focus-within,
+div[data-baseweb="select"] > div:focus-within {
+    border-color: var(--soc-blue) !important;
+}
+
+/* Buttons */
+.stButton > button,
+.stDownloadButton > button {
+    min-height: 40px;
     border-radius: 8px;
-
-    font-weight: 600;
-
-    border: 1px solid #31516d;
-
-    background-color: #122131;
-
-    color: #ffffff;
+    border: 1px solid #2b4358;
+    background: #0e2130;
+    color: #eaf4fb;
+    font-weight: 650;
 }
 
-.stButton > button:hover {
-    border-color: #4da3ff;
-
-    background-color: #183149;
-
-    color: #ffffff;
-}
-
-
-/* Primary Button */
-
-button[kind="primary"] {
-    background-color: #1769aa;
-
-    border: 1px solid #2789d1;
-
+.stButton > button:hover,
+.stDownloadButton > button:hover {
+    border-color: var(--soc-blue);
+    background: #12314a;
     color: white;
 }
 
-button[kind="primary"]:hover {
-    background-color: #1d7fc2;
+button[kind="primary"] {
+    background: linear-gradient(135deg, #0878c9, #075c9a) !important;
+    border-color: #1496e5 !important;
 }
 
-
-/* ---------------------------------------------------------
-   Login Page
-   --------------------------------------------------------- */
-
-/*
-   Streamlit's normal content container is used.
-   These selectors improve the login appearance without
-   injecting HTML into the page.
-*/
-
-div[data-testid="stVerticalBlock"] {
-    gap: 1rem;
+/* Alerts */
+div[data-testid="stAlert"] {
+    border-radius: 8px;
+    border: 1px solid var(--soc-border);
 }
 
-
-/* ---------------------------------------------------------
-   Divider
-   --------------------------------------------------------- */
-
-hr {
-    border-color: #243647;
-}
-
-
-/* ---------------------------------------------------------
-   Metrics
-   --------------------------------------------------------- */
-
-div[data-testid="stMetric"] {
-    background-color: #101a25;
-
-    border: 1px solid #24384c;
-
-    border-radius: 10px;
-
-    padding: 18px;
-}
-
-
-/* ---------------------------------------------------------
-   Dataframes
-   --------------------------------------------------------- */
-
+/* Data tables */
 div[data-testid="stDataFrame"] {
-    border: 1px solid #26394d;
-
-    border-radius: 10px;
-
+    border: 1px solid var(--soc-border);
+    border-radius: 9px;
     overflow: hidden;
 }
 
-
-/* ---------------------------------------------------------
-   Alerts
-   --------------------------------------------------------- */
-
-div[data-testid="stAlert"] {
-    border-radius: 8px;
+/* Plotly */
+div[data-testid="stPlotlyChart"] {
+    border: 1px solid var(--soc-border);
+    border-radius: 10px;
+    background: var(--soc-panel);
+    padding: .25rem;
 }
 
+/* Tabs */
+button[data-baseweb="tab"] {
+    color: var(--soc-muted);
+}
+button[data-baseweb="tab"][aria-selected="true"] {
+    color: var(--soc-blue);
+}
 
-/* ---------------------------------------------------------
-   Success / Warning / Error
-   --------------------------------------------------------- */
+/* Status text */
+.soc-online {
+    color: var(--soc-green);
+}
+.soc-warning {
+    color: var(--soc-yellow);
+}
+.soc-danger {
+    color: var(--soc-red);
+}
 
-div[data-testid="stAlert"] p {
-    color: inherit;
+hr {
+    border-color: var(--soc-border) !important;
+}
+
+@media (max-width: 900px) {
+    .block-container {
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
 }
