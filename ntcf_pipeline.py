@@ -4,9 +4,16 @@ ntcf_pipeline.py
 Main runtime pipeline for the Network Threat Cognition
 Framework (NTCF).
 
+Supports:
+    - One-shot detection
+    - Continuous live detection
+    - Batched packet processing
+
 Pipeline:
 
-Live Packet Capture
+Packet Capture
+↓
+Packet Parser
 ↓
 Flow Feature Extraction
 ↓
@@ -14,7 +21,9 @@ NSL-KDD Adapter
 ↓
 Preprocessing
 ↓
-Threat Detection
+ML Prediction
+↓
+Confidence Calculation
 ↓
 Decision Engine
 ↓
@@ -25,11 +34,13 @@ Firewall
 Event Logger
 ↓
 Database
+↓
+Backend API
+↓
+Dashboard
 """
 
-from packet_capture.live_capture import (
-    capture_packets,
-)
+from packet_capture.live_capture import capture_packets
 
 from packet_capture.flow_feature_extractor import (
     extract_flow_features,
@@ -57,31 +68,189 @@ from database.connection import (
 )
 
 
+# =========================================================
+# Process One Packet Batch
+# =========================================================
+
+def process_packet_batch(
+    packets,
+    detector,
+    db=None,
+):
+    """
+    Process one captured packet batch through the
+    complete NTCF detection pipeline.
+
+    Returns
+    -------
+    list
+        Detection results.
+    """
+
+    results = []
+
+    if not packets:
+        return results
+
+    # -----------------------------------------------------
+    # Flow Feature Extraction
+    # -----------------------------------------------------
+
+    print(
+        "\n[2] Extracting flow features..."
+    )
+
+    flows = extract_flow_features(
+        packets
+    )
+
+    print(
+        f"Flows extracted: {len(flows)}"
+    )
+
+    if flows.empty:
+        return results
+
+    # -----------------------------------------------------
+    # NSL-KDD Adapter
+    # -----------------------------------------------------
+
+    print(
+        "[3] Adapting flows to NSL-KDD schema..."
+    )
+
+    raw_features = adapt_flow_dataframe(
+        flows
+    )
+
+    print(
+        f"Feature shape: {raw_features.shape}"
+    )
+
+    # -----------------------------------------------------
+    # Detection
+    # -----------------------------------------------------
+
+    for index, row in raw_features.iterrows():
+
+        try:
+
+            # ---------------------------------------------
+            # Preprocessing
+            # ---------------------------------------------
+
+            model_input = preprocess_features(
+                row.to_dict()
+            )
+
+            # ---------------------------------------------
+            # ML Prediction
+            # ---------------------------------------------
+
+            detection = detector.detect(
+                model_input
+            )
+
+            source_ip = flows.iloc[index].get(
+                "src_ip"
+            )
+
+            destination_ip = flows.iloc[index].get(
+                "dst_ip"
+            )
+
+            # ---------------------------------------------
+            # Decision Engine
+            # ---------------------------------------------
+
+            decision = process_detection(
+                prediction=detection["prediction"],
+                confidence_score=detection["confidence"],
+                ip_address=source_ip,
+                destination_ip=destination_ip,
+                db=db,
+            )
+
+            result = {
+                "flow": index + 1,
+                "source_ip": source_ip,
+                "destination_ip": destination_ip,
+                **decision,
+            }
+
+            results.append(result)
+
+            # ---------------------------------------------
+            # Console Output
+            # ---------------------------------------------
+
+            print(
+                "\n----------------------------------------"
+            )
+
+            print(
+                f"Source       : {source_ip}"
+            )
+
+            print(
+                f"Destination  : {destination_ip}"
+            )
+
+            print(
+                f"Prediction   : "
+                f"{decision.get('prediction')}"
+            )
+
+            print(
+                f"Confidence   : "
+                f"{decision.get('confidence_score')}"
+            )
+
+            print(
+                f"Level        : "
+                f"{decision.get('confidence_level')}"
+            )
+
+            print(
+                f"Severity     : "
+                f"{decision.get('severity')}"
+            )
+
+            print(
+                f"Action       : "
+                f"{decision.get('action')}"
+            )
+
+            if "database" in decision:
+
+                print(
+                    f"Database     : "
+                    f"ThreatEvent "
+                    f"{decision['database'].get('threat_event_id')}"
+                )
+
+        except Exception as error:
+
+            print(
+                f"[FLOW ERROR] {error}"
+            )
+
+    return results
+
+
+# =========================================================
+# One-Shot Pipeline
+# =========================================================
+
 def run_detection_pipeline(
     packet_count=20,
     persist_events=True,
 ):
     """
-    Run the complete NTCF detection pipeline.
+    Run one detection cycle.
 
-    Parameters
-    ----------
-    packet_count : int
-        Number of packets to capture.
-
-    persist_events : bool
-        If True, detection events are stored in the
-        NTCF database.
-
-    Returns
-    -------
-    list
-        Detection results for each extracted flow.
+    This preserves the original Issue #31 behavior.
     """
-
-    # ---------------------------------------------------------
-    # Initialize database
-    # ---------------------------------------------------------
 
     if persist_events:
         init_db()
@@ -92,10 +261,6 @@ def run_detection_pipeline(
         db = SessionLocal()
 
     try:
-
-        # -----------------------------------------------------
-        # 1. Capture packets
-        # -----------------------------------------------------
 
         print(
             "\n========================================"
@@ -109,8 +274,12 @@ def run_detection_pipeline(
             "========================================"
         )
 
+        # -------------------------------------------------
+        # Capture
+        # -------------------------------------------------
+
         print(
-            "\n[1/7] Capturing packets..."
+            f"\n[1] Capturing {packet_count} packets..."
         )
 
         packets = capture_packets(
@@ -122,197 +291,38 @@ def run_detection_pipeline(
         )
 
         if not packets:
-
-            print(
-                "No packets captured."
-            )
-
+            print("No packets captured.")
             return []
 
-        # -----------------------------------------------------
-        # 2. Extract flow-level features
-        # -----------------------------------------------------
-
-        print(
-            "\n[2/7] Extracting flow features..."
-        )
-
-        flows = extract_flow_features(
-            packets
-        )
-
-        print(
-            f"Flows extracted: {len(flows)}"
-        )
-
-        if flows.empty:
-
-            print(
-                "No flows extracted."
-            )
-
-            return []
-
-        # -----------------------------------------------------
-        # 3. Adapt to NSL-KDD schema
-        # -----------------------------------------------------
-
-        print(
-            "\n[3/7] Adapting to NSL-KDD features..."
-        )
-
-        raw_features = adapt_flow_dataframe(
-            flows
-        )
-
-        print(
-            f"Raw feature shape: "
-            f"{raw_features.shape}"
-        )
-
-        # -----------------------------------------------------
-        # 4. Load threat detector
-        # -----------------------------------------------------
-
-        print(
-            "\n[4/7] Loading threat detection model..."
-        )
+        # -------------------------------------------------
+        # Process
+        # -------------------------------------------------
 
         detector = ThreatDetector(
             model_name="decision_tree"
         )
 
-        # -----------------------------------------------------
-        # 5. Run detection
-        # -----------------------------------------------------
-
-        print(
-            "\n[5/7] Running threat detection..."
-        )
-
-        results = []
-
-        for index, row in raw_features.iterrows():
-
-            model_input = preprocess_features(
-                row.to_dict()
-            )
-
-            detection = detector.detect(
-                model_input
-            )
-
-            source_ip = (
-                flows.iloc[index].get(
-                    "src_ip"
-                )
-            )
-
-            destination_ip = (
-                flows.iloc[index].get(
-                    "dst_ip"
-                )
-            )
-
-            # -------------------------------------------------
-            # 6. Decision engine + database
-            # -------------------------------------------------
-
-            decision = process_detection(
-                prediction=detection[
-                    "prediction"
-                ],
-                confidence_score=detection[
-                    "confidence"
-                ],
-                ip_address=source_ip,
-                destination_ip=destination_ip,
-                db=db,
-            )
-
-            result = {
-                "flow": index + 1,
-                "source_ip": source_ip,
-                "destination_ip": destination_ip,
-                **decision,
-            }
-
-            results.append(
-                result
-            )
-
-            print(
-                f"\nFlow {index + 1}"
-            )
-
-            print(
-                f"  Source IP  : "
-                f"{source_ip}"
-            )
-
-            print(
-                f"  Destination: "
-                f"{destination_ip}"
-            )
-
-            print(
-                f"  Prediction : "
-                f"{decision['prediction']}"
-            )
-
-            print(
-                f"  Confidence : "
-                f"{decision['confidence_score']}"
-            )
-
-            print(
-                f"  Level      : "
-                f"{decision['confidence_level']}"
-            )
-
-            print(
-                f"  Severity   : "
-                f"{decision['severity']}"
-            )
-
-            print(
-                f"  Action     : "
-                f"{decision['action']}"
-            )
-
-            if "database" in decision:
-
-                print(
-                    "  Database   : "
-                    f"ThreatEvent "
-                    f"{decision['database']['threat_event_id']}"
-                )
-
-        # -----------------------------------------------------
-        # 7. Completion
-        # -----------------------------------------------------
-
-        print(
-            "\n[7/7] Pipeline complete."
+        results = process_packet_batch(
+            packets,
+            detector,
+            db,
         )
 
         print(
-            f"Processed flows: "
-            f"{len(results)}"
+            "\n========================================"
         )
 
-        if persist_events:
+        print(
+            f"Pipeline complete."
+        )
 
-            print(
-                "Detection events have been "
-                "stored in the NTCF database."
-            )
+        print(
+            f"Processed flows: {len(results)}"
+        )
 
-        else:
-
-            print(
-                "Database persistence disabled."
-            )
+        print(
+            "========================================"
+        )
 
         return results
 
@@ -322,8 +332,218 @@ def run_detection_pipeline(
             db.close()
 
 
+# =========================================================
+# Continuous Live Pipeline
+# =========================================================
+
+def run_live_detection(
+    batch_size=50,
+    persist_events=True,
+):
+    """
+    Run the NTCF detection pipeline continuously.
+
+    Packets are captured in bounded batches and each
+    batch is immediately processed through the complete
+    NTCF pipeline.
+
+    Press CTRL+C to stop.
+    """
+
+    if persist_events:
+        init_db()
+
+    db = None
+
+    if persist_events:
+        db = SessionLocal()
+
+    detector = ThreatDetector(
+        model_name="decision_tree"
+    )
+
+    batch_number = 0
+    total_packets = 0
+    total_flows = 0
+
+    print(
+        "\n========================================"
+    )
+
+    print(
+        "NTCF LIVE THREAT MONITORING"
+    )
+
+    print(
+        "========================================"
+    )
+
+    print(
+        f"Batch size : {batch_size}"
+    )
+
+    print(
+        "Press CTRL+C to stop."
+    )
+
+    try:
+
+        while True:
+
+            batch_number += 1
+
+            print(
+                "\n========================================"
+            )
+
+            print(
+                f"CAPTURE BATCH {batch_number}"
+            )
+
+            print(
+                "========================================"
+            )
+
+            # -------------------------------------------------
+            # Capture next batch
+            # -------------------------------------------------
+
+            packets = capture_packets(
+                packet_count=batch_size
+            )
+
+            if not packets:
+
+                print(
+                    "No packets captured."
+                )
+
+                continue
+
+            total_packets += len(packets)
+
+            print(
+                f"Captured: {len(packets)} packets"
+            )
+
+            # -------------------------------------------------
+            # Process batch
+            # -------------------------------------------------
+
+            results = process_packet_batch(
+                packets,
+                detector,
+                db,
+            )
+
+            total_flows += len(results)
+
+            # -------------------------------------------------
+            # Batch summary
+            # -------------------------------------------------
+
+            threats = [
+                result
+                for result in results
+                if str(
+                    result.get(
+                        "prediction",
+                        ""
+                    )
+                ).lower() != "normal"
+            ]
+
+            blocks = [
+                result
+                for result in results
+                if str(
+                    result.get(
+                        "action",
+                        ""
+                    )
+                ).lower() == "block"
+            ]
+
+            print(
+                "\nBATCH SUMMARY"
+            )
+
+            print(
+                f"Packets : {len(packets)}"
+            )
+
+            print(
+                f"Flows   : {len(results)}"
+            )
+
+            print(
+                f"Threats : {len(threats)}"
+            )
+
+            print(
+                f"Blocks  : {len(blocks)}"
+            )
+
+            print(
+                f"Total packets processed: "
+                f"{total_packets}"
+            )
+
+            print(
+                f"Total flows processed: "
+                f"{total_flows}"
+            )
+
+    except KeyboardInterrupt:
+
+        print(
+            "\n\n========================================"
+        )
+
+        print(
+            "NTCF LIVE MONITORING STOPPED"
+        )
+
+        print(
+            "========================================"
+        )
+
+        print(
+            f"Total packets: {total_packets}"
+        )
+
+        print(
+            f"Total flows  : {total_flows}"
+        )
+
+    finally:
+
+        if db is not None:
+            db.close()
+
+
+# =========================================================
+# Main
+# =========================================================
+
 if __name__ == "__main__":
 
-    run_detection_pipeline(
-        packet_count=20
-    )
+    # -----------------------------------------------------
+    # Change this to True for continuous monitoring.
+    # -----------------------------------------------------
+
+    LIVE_MODE = True
+
+    if LIVE_MODE:
+
+        run_live_detection(
+            batch_size=50,
+            persist_events=True,
+        )
+
+    else:
+
+        run_detection_pipeline(
+            packet_count=20,
+            persist_events=True,
+        )
